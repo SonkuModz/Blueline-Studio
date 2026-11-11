@@ -98,6 +98,10 @@ The tests read the real game, so they need the dump at `NHL 19/CUSA11126` inside
 - [docs/SPORTSNET_BUG.md](docs/SPORTSNET_BUG.md): measurements for a custom score bug
 - [CONTRIBUTING.md](CONTRIBUTING.md): how to report a problem or send a change
 
+## License
+
+The code is [MIT licensed](LICENSE). The MIT license covers Blueline's code only, not the game, team marks or logos.
+
 ## Legal
 
 Blueline Studio is a fan-made tool. It is not made, endorsed or supported by Electronic Arts. NHL, team names and logos
