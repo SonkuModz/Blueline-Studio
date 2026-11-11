@@ -1,0 +1,125 @@
+﻿<UserControl x:Class="Blueline.App.Modules.HomeView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <Grid Margin="20" MaxWidth="1180" HorizontalAlignment="Stretch">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="16" />
+        <ColumnDefinition Width="*" />
+      </Grid.ColumnDefinitions>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+      </Grid.RowDefinitions>
+
+      <StackPanel Grid.ColumnSpan="3" Margin="0,0,0,18">
+        <TextBlock Style="{StaticResource Heading}" Text="Settings" />
+        <TextBlock Style="{StaticResource Dim}" Margin="0,4,0,0" Text="How Blueline Studio looks, and where it finds the game, your project and the tools it borrows." />
+      </StackPanel>
+
+      <!-- Appearance -->
+      <Border Grid.Row="1" Grid.ColumnSpan="3" Style="{StaticResource Card}" Margin="0,0,0,16">
+        <StackPanel>
+          <TextBlock Style="{StaticResource Section}" Text="APPEARANCE" />
+          <Grid Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="170" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Text="Theme" VerticalAlignment="Center" Margin="0,0,0,12" />
+            <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Margin="0,0,0,12">
+              <ToggleButton x:Name="ThemeDark" Content="Dark" Style="{StaticResource Chip}" Margin="0,0,6,0" Click="OnThemeChosen" />
+              <ToggleButton x:Name="ThemeLight" Content="Light" Style="{StaticResource Chip}" Click="OnThemeChosen" />
+            </StackPanel>
+
+            <TextBlock Grid.Row="1" Text="Motion" VerticalAlignment="Top" Margin="0,2,0,12" />
+            <StackPanel Grid.Row="1" Grid.Column="1" Margin="0,0,0,12">
+              <CheckBox x:Name="ReduceMotionBox" Content="Reduce motion" Click="OnReduceMotion" />
+              <TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,3,0,0" Text="Pages and the start screen stop sliding and fading. Windows' own animation effects setting is respected too." />
+            </StackPanel>
+
+            <TextBlock Grid.Row="2" Text="Start screen picture" VerticalAlignment="Center" />
+            <DockPanel Grid.Row="2" Grid.Column="1">
+              <Button DockPanel.Dock="Right" Content="Use rink artwork" Style="{StaticResource Quiet}" Margin="6,0,0,0" Click="OnResetBackground" />
+              <Button DockPanel.Dock="Right" Content="Choose picture" Margin="8,0,0,0" Click="OnChangeBackground" />
+              <TextBlock x:Name="BackgroundText" Style="{StaticResource Dim}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+            </DockPanel>
+          </Grid>
+        </StackPanel>
+      </Border>
+
+      <!-- Game -->
+      <Border Grid.Row="2" Style="{StaticResource Card}" x:Name="GameCard">
+        <StackPanel>
+          <TextBlock Style="{StaticResource Section}" Text="GAME" />
+          <TextBlock x:Name="GameState" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
+          <TextBlock x:Name="GamePath" Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,3,0,12" />
+          <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+            <Button x:Name="BrowseGame" Content="Choose game folder" Style="{StaticResource Primary}" Click="OnBrowseGame" />
+          </StackPanel>
+          <ItemsControl x:Name="Stats">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate><UniformGrid Columns="3" /></ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <StackPanel Margin="0,0,0,12">
+                  <TextBlock Text="{Binding Value}" FontSize="17" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding Label}" Style="{StaticResource Dim}" />
+                </StackPanel>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+
+      <!-- Project -->
+      <Border Grid.Row="2" Grid.Column="2" Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Style="{StaticResource Section}" Text="PROJECT" />
+          <TextBlock x:Name="ProjectState" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
+          <TextBlock x:Name="ProjectPath" Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,3,0,12" />
+          <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+            <Button Content="New project" Style="{StaticResource Primary}" Margin="0,0,6,0" Click="OnNewProject" />
+            <Button Content="Open project" Margin="0,0,6,0" Click="OnOpenProject" />
+            <Button x:Name="CloseProject" Content="Close" Style="{StaticResource Quiet}" Click="OnCloseProject" />
+          </StackPanel>
+          <TextBlock x:Name="RecentLabel" Style="{StaticResource Section}" Text="RECENT" />
+          <ItemsControl x:Name="Recent">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Button Content="{Binding}" Style="{StaticResource Quiet}" HorizontalContentAlignment="Left" HorizontalAlignment="Left" Padding="4,3" FontSize="12" Click="OnRecent" />
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+
+      <!-- Tools -->
+      <Border Grid.Row="3" Grid.ColumnSpan="3" Style="{StaticResource Card}" Margin="0,16,0,0">
+        <StackPanel>
+          <TextBlock Style="{StaticResource Section}" Text="AUDIO TOOL" />
+          <TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,0,0,8" Text="Audio decoding and encoding uses EA's sx.exe, which you supply. It is not included with Blueline. Everything else works without it." />
+          <DockPanel>
+            <Button DockPanel.Dock="Right" Content="Choose sx.exe" Margin="8,0,0,0" Click="OnBrowseSx" />
+            <TextBlock x:Name="SxPath" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" FontSize="12" />
+          </DockPanel>
+          <TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,14,0,8" Text="Video uses FFmpeg, which you install. It is not included with Blueline." />
+          <DockPanel>
+            <Button DockPanel.Dock="Right" Content="Choose ffmpeg.exe" Margin="8,0,0,0" Click="OnBrowseFfmpeg" />
+            <TextBlock x:Name="FfmpegPath" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" FontSize="12" />
+          </DockPanel>
+        </StackPanel>
+      </Border>
+    </Grid>
+  </ScrollViewer>
+</UserControl>

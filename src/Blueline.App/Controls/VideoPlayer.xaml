@@ -1,0 +1,30 @@
+<UserControl x:Class="Blueline.App.Controls.VideoPlayer"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+
+    <Border Background="Black" CornerRadius="4">
+      <Grid>
+        <MediaElement x:Name="Media" LoadedBehavior="Manual" UnloadedBehavior="Manual" ScrubbingEnabled="True" Stretch="Uniform"
+                      MediaOpened="OnOpened" MediaEnded="OnEnded" MediaFailed="OnFailed" />
+        <StackPanel x:Name="MessagePanel" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="460" Margin="24">
+          <TextBlock x:Name="Message" Style="{StaticResource Dim}" FontSize="13" TextAlignment="Center" TextWrapping="Wrap" />
+          <ProgressBar x:Name="Working" Height="4" Margin="0,10,0,0" Minimum="0" Maximum="1" Visibility="Collapsed" />
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <DockPanel Grid.Row="1" Margin="0,8,0,0">
+      <Button x:Name="PlayButton" DockPanel.Dock="Left" Content="Play" Width="64" Click="OnPlayPause" IsEnabled="False" />
+      <Slider x:Name="Volume" DockPanel.Dock="Right" Width="76" Minimum="0" Maximum="1" Value="0.8" VerticalAlignment="Center" Margin="8,0,0,0"
+              ValueChanged="OnVolume" ToolTip="Volume" />
+      <TextBlock x:Name="TimeText" DockPanel.Dock="Right" Style="{StaticResource Dim}" VerticalAlignment="Center" Margin="10,0,0,0" Text="0:00 / 0:00" />
+      <Slider x:Name="Seek" Minimum="0" Maximum="1" VerticalAlignment="Center" Margin="10,0,0,0" IsEnabled="False" IsMoveToPointEnabled="True"
+              ValueChanged="OnSeek" />
+    </DockPanel>
+  </Grid>
+</UserControl>

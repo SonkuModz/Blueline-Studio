@@ -1,0 +1,70 @@
+<UserControl x:Class="Blueline.App.Modules.TexturesModule"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:Blueline.App.Controls">
+  <Grid Margin="14">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="500" MinWidth="360" />
+      <ColumnDefinition Width="8" />
+      <ColumnDefinition Width="*" MinWidth="360" />
+      <ColumnDefinition Width="12" />
+      <ColumnDefinition Width="260" />
+    </Grid.ColumnDefinitions>
+
+    <controls:AssetBrowser x:Name="Browser" />
+    <GridSplitter Grid.Column="1" />
+
+    <Border x:Name="PreviewCard" Grid.Column="2" Style="{StaticResource Card}">
+      <controls:TexturePreview x:Name="Preview" />
+    </Border>
+
+    <ScrollViewer Grid.Column="4" VerticalScrollBarVisibility="Auto">
+      <StackPanel>
+        <Border Style="{StaticResource Card}" Margin="0,0,0,8">
+          <StackPanel>
+            <TextBlock Style="{StaticResource Section}" Text="TEXTURE" />
+            <TextBlock x:Name="NameText" FontWeight="SemiBold" TextWrapping="Wrap" Text="None selected" />
+            <TextBlock x:Name="SummaryText" Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,4,0,0" />
+            <TextBlock x:Name="StateText" Foreground="{DynamicResource AccentBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0" />
+            <StackPanel x:Name="CompareRow" Orientation="Horizontal" Margin="0,8,0,0" Visibility="Collapsed">
+              <ToggleButton x:Name="ShowOriginal" Content="Show original" Style="{StaticResource Chip}" Click="OnCompare" />
+            </StackPanel>
+          </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource Card}" Margin="0,0,0,8">
+          <StackPanel>
+            <TextBlock Style="{StaticResource Section}" Text="EXPORT" />
+            <Button x:Name="ExportPng" Content="Export PNG" Margin="0,0,0,6" Click="OnExportPng" />
+            <Button x:Name="ExportDds" Content="Export DDS (exact blocks)" Margin="0,0,0,6" Click="OnExportDds" ToolTip="A standard DDS with the game's compressed data, detiled. No quality is lost." />
+            <Button x:Name="ExportSelected" Content="Export selected as PNG" Margin="0,0,0,6" Click="OnExportSelected" />
+            <Button x:Name="ShowTeamButton" Content="Show in Teams" Click="OnShowTeam" ToolTip="Opens the team this texture belongs to, if it has one" />
+          </StackPanel>
+        </Border>
+
+        <Border x:Name="ImportCard" Style="{StaticResource Card}" Margin="0,0,0,8">
+          <StackPanel>
+            <TextBlock Style="{StaticResource Section}" Text="IMPORT" />
+            <TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,0,0,8"
+                       Text="Drop an image on the preview, or choose one. It is fitted to this texture's size, format and mip count." />
+            <TextBlock Style="{StaticResource Dim}" Text="Quality" Margin="0,0,0,3" />
+            <ComboBox x:Name="QualityBox" Margin="0,0,0,8" />
+            <Button x:Name="ImportButton" Content="Import image" Style="{StaticResource Primary}" Margin="0,0,0,6" Click="OnImport" />
+            <Button x:Name="RevertButton" Content="Revert to original" Margin="0,0,0,6" Click="OnRevert" />
+            <TextBlock x:Name="BlockerText" Foreground="{DynamicResource WarningBrush}" FontSize="12" TextWrapping="Wrap" Visibility="Collapsed" />
+          </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource Card}">
+          <StackPanel>
+            <TextBlock Style="{StaticResource Section}" Text="BATCH" />
+            <TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,0,0,8"
+                       Text="Import a folder. Files match by game path, or by name when only one texture has it." />
+            <Button Content="Import folder" Click="OnBatch" />
+            <ItemsControl x:Name="BatchResults" Margin="0,8,0,0" />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+    </ScrollViewer>
+  </Grid>
+</UserControl>

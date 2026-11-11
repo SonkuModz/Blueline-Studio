@@ -1,0 +1,70 @@
+<UserControl x:Class="Blueline.App.Modules.VideoModule"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:Blueline.App.Controls">
+  <Grid Margin="14">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="400" MinWidth="320" />
+      <ColumnDefinition Width="8" />
+      <ColumnDefinition Width="*" MinWidth="380" />
+      <ColumnDefinition Width="12" />
+      <ColumnDefinition Width="280" />
+    </Grid.ColumnDefinitions>
+
+    <controls:AssetBrowser x:Name="Browser" />
+    <GridSplitter Grid.Column="1" />
+
+    <DockPanel Grid.Column="2">
+      <WrapPanel x:Name="TrackChoice" DockPanel.Dock="Top" Margin="2,0,0,6" Visibility="Collapsed">
+        <ToggleButton x:Name="PictureChip" Style="{StaticResource Chip}" Content="Picture" Margin="0,0,4,0" IsChecked="True" Click="OnTrack" />
+        <ToggleButton x:Name="MatteChip" Style="{StaticResource Chip}" Content="Matte" Click="OnTrack"
+                      ToolTip="The transparency track. White shows the video, black shows what is behind it" />
+      </WrapPanel>
+      <Border x:Name="PlayerCard" Style="{StaticResource Card}" Padding="8">
+        <controls:VideoPlayer x:Name="Player" />
+      </Border>
+    </DockPanel>
+
+    <ScrollViewer Grid.Column="4" VerticalScrollBarVisibility="Auto">
+      <StackPanel>
+        <Border Style="{StaticResource Card}" Margin="0,0,0,8">
+          <StackPanel>
+            <TextBlock Style="{StaticResource Section}" Text="VIDEO" />
+            <TextBlock x:Name="NameText" FontWeight="SemiBold" TextWrapping="Wrap" Text="None selected" />
+            <TextBlock x:Name="FactsText" Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,4,0,0" />
+            <TextBlock x:Name="StateText" Foreground="{DynamicResource AccentBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0" />
+          </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource Card}" Margin="0,0,0,8">
+          <StackPanel>
+            <TextBlock Style="{StaticResource Section}" Text="EXPORT" />
+            <Button x:Name="ExportOriginal" Content="Export original" Margin="0,0,0,6" Click="OnExportOriginal" ToolTip="The game's own file, unchanged" />
+            <Button x:Name="ExportMp4" Content="Export MP4" Click="OnExportMp4" ToolTip="Full size, H.264 and AAC, for watching or editing" />
+          </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource Card}" Margin="0,0,0,8">
+          <StackPanel>
+            <TextBlock Style="{StaticResource Section}" Text="REPLACE" />
+            <TextBlock x:Name="ReplaceNote" Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,0,0,8" />
+            <CheckBox x:Name="NewMatte" Content="Also replace the matte" Margin="0,0,0,8" Visibility="Collapsed"
+                      ToolTip="Asks for a second AVI holding the matte, encoded the same way. Left off, the game's matte is kept" />
+            <Button x:Name="ReplaceButton" Content="Replace video" Style="{StaticResource Primary}" Margin="0,0,0,6" Click="OnReplace" />
+            <Button x:Name="RevertButton" Content="Revert" Click="OnRevert" />
+          </StackPanel>
+        </Border>
+
+        <TextBlock x:Name="ToolNote" Foreground="{DynamicResource WarningBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+
+        <Border Style="{StaticResource Card}">
+          <StackPanel>
+            <TextBlock Style="{StaticResource Section}" Text="LIMITS" />
+            <TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap"
+                       Text="Replacements are made to match the game's own files, but none has been seen in game yet. The preview is a converted copy at up to 1280 wide. Sound inside .vp6 files is kept when replacing, but cannot be previewed." />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+    </ScrollViewer>
+  </Grid>
+</UserControl>

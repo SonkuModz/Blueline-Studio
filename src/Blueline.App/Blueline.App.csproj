@@ -1,0 +1,31 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>BluelineStudio</AssemblyName>
+    <RootNamespace>Blueline.App</RootNamespace>
+    <Product>Blueline Studio</Product>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\blueline.ico</ApplicationIcon>
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Blueline.Core\Blueline.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="Assets\sportsnet_logo.png" CopyToOutputDirectory="PreserveNewest" />
+    <Resource Include="Assets\blueline_logo.png" />
+    <Resource Include="Assets\blueline_icon.png" />
+    <Resource Include="Assets\blueline.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+    <Using Remove="System.IO" />
+    <Using Include="System.IO" />
+  </ItemGroup>
+</Project>
+

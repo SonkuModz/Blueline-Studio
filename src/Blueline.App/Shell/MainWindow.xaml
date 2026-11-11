@@ -1,0 +1,119 @@
+﻿<Window x:Class="Blueline.App.Shell.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:Blueline.App.Controls"
+        xmlns:shell="clr-namespace:Blueline.App.Shell"
+        Icon="pack://application:,,,/Assets/blueline.ico"
+        Title="Blueline Studio" Width="1480" Height="900" MinWidth="1080" MinHeight="640"
+        WindowStartupLocation="CenterScreen" Background="{DynamicResource WindowBrush}"
+        UseLayoutRounding="True" TextOptions.TextFormattingMode="Display">
+  <Grid x:Name="Root" Background="{DynamicResource WindowBrush}">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="48" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="28" />
+    </Grid.RowDefinitions>
+
+    <!-- Top bar: identity, navigation, project -->
+    <Border Grid.Row="0" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1">
+      <DockPanel>
+        <Button DockPanel.Dock="Left" Style="{StaticResource Quiet}" Margin="10,0,10,0" Padding="6,4" VerticalAlignment="Center" Click="OnShowStart" ToolTip="Back to the start screen">
+          <StackPanel Orientation="Horizontal">
+            <Image Source="pack://application:,,,/Assets/blueline_icon.png" Width="26" Height="26" Margin="0,0,9,0" RenderOptions.BitmapScalingMode="HighQuality" />
+            <TextBlock Text="Blueline Studio" FontWeight="SemiBold" FontSize="14" VerticalAlignment="Center" />
+          </StackPanel>
+        </Button>
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
+          <Button x:Name="SearchButton" Style="{StaticResource Quiet}" Click="OnSearch" Margin="0,0,6,0" Padding="9,3" ToolTip="Search  (Ctrl+K)">
+            <TextBlock FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="14" Foreground="{DynamicResource DimBrush}" Text="&#xE721;" />
+          </Button>
+          <Button x:Name="ProjectChip" Style="{StaticResource Quiet}" Click="OnProjectChip" Margin="0,0,8,0" Padding="9,4" ToolTip="Your project">
+            <StackPanel Orientation="Horizontal">
+              <Ellipse x:Name="ProjectDot" Width="7" Height="7" Margin="0,0,8,0" VerticalAlignment="Center" Fill="{DynamicResource DimBrush}" />
+              <TextBlock x:Name="ProjectLabel" Style="{StaticResource Dim}" VerticalAlignment="Center" />
+              <TextBlock Style="{StaticResource Dim}" Margin="7,1,0,0" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="9" VerticalAlignment="Center" Text="&#xE70D;" />
+            </StackPanel>
+          </Button>
+          <Popup x:Name="ProjectMenu" PlacementTarget="{Binding ElementName=ProjectChip}" Placement="Bottom" HorizontalOffset="-150" VerticalOffset="4"
+                 StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade">
+            <Border x:Name="ProjectMenuCard" Width="330" Margin="0,0,16,16" Padding="8" CornerRadius="10" BorderThickness="1"
+                    Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}">
+              <Border.Effect>
+                <DropShadowEffect BlurRadius="16" ShadowDepth="4" Opacity="0.35" />
+              </Border.Effect>
+              <StackPanel>
+                <StackPanel Margin="10,6,10,8">
+                  <TextBlock x:Name="MenuTitle" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                  <TextBlock x:Name="MenuPath" Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,3,0,0" />
+                  <TextBlock x:Name="MenuStats" Style="{StaticResource Dim}" Margin="0,3,0,0" />
+                </StackPanel>
+                <Rectangle x:Name="MenuRule1" Height="1" Fill="{DynamicResource LineBrush}" Margin="0,2,0,4" />
+                <Button x:Name="MenuUndo" Style="{StaticResource PopupItem}" Click="OnMenuUndo" />
+                <Button x:Name="MenuRedo" Style="{StaticResource PopupItem}" Click="OnMenuRedo" />
+                <Rectangle x:Name="MenuRule2" Height="1" Fill="{DynamicResource LineBrush}" Margin="0,4,0,4" />
+                <Button Content="New project" Style="{StaticResource PopupItem}" Click="OnMenuNew" />
+                <Button Content="Open project" Style="{StaticResource PopupItem}" Click="OnMenuOpen" />
+                <Button x:Name="MenuFolder" Content="Show project folder" Style="{StaticResource PopupItem}" Click="OnMenuFolder" />
+                <Button x:Name="MenuClose" Content="Close project" Style="{StaticResource PopupItem}" Click="OnMenuClose" />
+                <Rectangle Height="1" Fill="{DynamicResource LineBrush}" Margin="0,4,0,4" />
+                <Button Content="Back to the start screen" Style="{StaticResource PopupItem}" Click="OnMenuStart" />
+              </StackPanel>
+            </Border>
+          </Popup>
+          <Button x:Name="ThemeButton" Style="{StaticResource Quiet}" Click="OnToggleTheme" Margin="0,0,6,0" Padding="9,3" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="15" ToolTip="Switch theme" />
+          <Button x:Name="UndoButton" Content="Undo" Style="{StaticResource Quiet}" Click="OnUndo" />
+          <Button x:Name="RedoButton" Content="Redo" Style="{StaticResource Quiet}" Click="OnRedo" />
+        </StackPanel>
+        <Grid x:Name="TabArea">
+          <StackPanel x:Name="Tabs" Orientation="Horizontal" />
+          <!-- The blue line under the current tab. It slides to the next one instead of jumping. -->
+          <Rectangle x:Name="Indicator" Height="2" Width="0" VerticalAlignment="Bottom" HorizontalAlignment="Left" IsHitTestVisible="False"
+                     Fill="{DynamicResource AccentTextBrush}">
+            <Rectangle.RenderTransform>
+              <TranslateTransform />
+            </Rectangle.RenderTransform>
+          </Rectangle>
+        </Grid>
+      </DockPanel>
+    </Border>
+
+    <!-- Error and notice banner -->
+    <Border x:Name="Banner" Grid.Row="1" Visibility="Collapsed" Background="{DynamicResource BannerBrush}" BorderBrush="{DynamicResource DangerBrush}" BorderThickness="0,0,0,1" Padding="16,8">
+      <DockPanel>
+        <Button DockPanel.Dock="Right" Content="Dismiss" Style="{StaticResource Quiet}" Click="OnDismissBanner" />
+        <Button x:Name="BannerLog" DockPanel.Dock="Right" Content="Open log" Style="{StaticResource Quiet}" Click="OnOpenLog" Margin="0,0,4,0" />
+        <StackPanel VerticalAlignment="Center">
+          <TextBlock x:Name="BannerTitle" FontWeight="SemiBold" TextWrapping="Wrap" />
+          <TextBlock x:Name="BannerText" Style="{StaticResource Dim}" TextWrapping="Wrap" />
+        </StackPanel>
+      </DockPanel>
+    </Border>
+
+    <controls:PageHost x:Name="Host" Grid.Row="2" ClipToBounds="True" Focusable="False" />
+
+    <Border x:Name="LogPanel" Grid.Row="3" Height="190" Visibility="Collapsed" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0">
+      <ListBox x:Name="LogList" FontFamily="{StaticResource MonoFont}" FontSize="12" />
+    </Border>
+
+    <!-- Status bar -->
+    <Border Grid.Row="4" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0">
+      <DockPanel Margin="12,0">
+        <Button DockPanel.Dock="Right" x:Name="LogToggle" Content="Log" Style="{StaticResource Quiet}" Padding="10,1" Click="OnToggleLog" />
+        <Button DockPanel.Dock="Right" x:Name="CancelJob" Content="Cancel" Style="{StaticResource Quiet}" Padding="10,1" Visibility="Collapsed" Click="OnCancelJob" />
+        <ProgressBar DockPanel.Dock="Right" x:Name="JobBar" Width="220" Margin="10,0" Visibility="Collapsed" />
+        <TextBlock x:Name="StatusText" Style="{StaticResource Dim}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+      </DockPanel>
+    </Border>
+
+    <!-- The start screen covers the whole window until you go in -->
+    <shell:StartScreen x:Name="Start" Grid.RowSpan="5" Visibility="Collapsed" />
+
+    <!-- Ctrl+K: jump to a tab, an action or a game file -->
+    <shell:CommandPalette x:Name="Palette" Grid.RowSpan="5" Visibility="Collapsed" />
+
+    <!-- Short messages, bottom right, above everything -->
+    <shell:ToastHost x:Name="Toasts" Grid.RowSpan="5" />
+  </Grid>
+</Window>

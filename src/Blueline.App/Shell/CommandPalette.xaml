@@ -1,0 +1,49 @@
+<UserControl x:Class="Blueline.App.Shell.CommandPalette"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             UseLayoutRounding="True">
+  <Grid>
+    <!-- Click anywhere outside the box to close it -->
+    <Rectangle x:Name="Backdrop" Fill="#000000" Opacity="0.5" MouseLeftButtonDown="OnBackdrop" />
+
+    <Border x:Name="Card" Width="600" VerticalAlignment="Top" HorizontalAlignment="Center" Margin="0,88,0,0" CornerRadius="12" BorderThickness="1"
+            Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" RenderTransformOrigin="0.5,0">
+      <Border.Effect>
+        <DropShadowEffect BlurRadius="28" ShadowDepth="8" Opacity="0.5" />
+      </Border.Effect>
+      <Border.RenderTransform>
+        <TranslateTransform />
+      </Border.RenderTransform>
+      <StackPanel>
+        <Grid Margin="16,14,16,12">
+          <TextBlock x:Name="Hint" IsHitTestVisible="False" Style="{StaticResource Dim}" FontSize="15" VerticalAlignment="Center" Margin="30,0,0,0"
+                     Text="Jump to a tab, an action or a game file" />
+          <TextBlock FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="15" VerticalAlignment="Center" Foreground="{DynamicResource DimBrush}" Text="&#xE721;" />
+          <TextBox x:Name="Query" FontSize="15" Margin="30,0,0,0" BorderThickness="0" Background="Transparent" Padding="0,2" VerticalAlignment="Center"
+                   CaretBrush="{DynamicResource TextBrush}" TextChanged="OnQueryChanged" PreviewKeyDown="OnQueryKey" />
+        </Grid>
+        <Rectangle Height="1" Fill="{DynamicResource LineBrush}" />
+        <ListBox x:Name="Results" MaxHeight="400" BorderThickness="0" Background="Transparent" Margin="6,6,6,6" HorizontalContentAlignment="Stretch"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" PreviewMouseLeftButtonUp="OnResultClick">
+          <ListBox.ItemTemplate>
+            <DataTemplate>
+              <DockPanel Margin="4,5">
+                <Border DockPanel.Dock="Left" Width="64" Height="20" CornerRadius="4" VerticalAlignment="Center" Background="{DynamicResource AccentSoftBrush}">
+                  <TextBlock Text="{Binding Kind}" FontSize="10" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"
+                             Foreground="{DynamicResource AccentTextBrush}" />
+                </Border>
+                <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
+                  <TextBlock Text="{Binding Title}" FontSize="13.5" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Text="{Binding Detail}" Style="{StaticResource Dim}" TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+              </DockPanel>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+        <TextBlock x:Name="Empty" Style="{StaticResource Dim}" Margin="22,4,22,16" Visibility="Collapsed" Text="Nothing matches. Try fewer or shorter words." />
+        <Rectangle Height="1" Fill="{DynamicResource LineBrush}" />
+        <TextBlock Style="{StaticResource Dim}" FontSize="11" Margin="18,8,18,10" Text="Up and Down to choose  ·  Enter to go  ·  Esc to close" />
+      </StackPanel>
+    </Border>
+  </Grid>
+</UserControl>

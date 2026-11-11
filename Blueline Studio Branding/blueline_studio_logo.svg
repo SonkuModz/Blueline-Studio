@@ -1,0 +1,83 @@
+<svg id="logoSvg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="100%" height="100%">
+                <defs>
+                    <!-- Gradient for Outer Ring Border -->
+                    <linearGradient id="blueRingGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stop-color="#38bdf8"/>
+                        <stop offset="50%" stop-color="#0284c7"/>
+                        <stop offset="100%" stop-color="#0369a1"/>
+                    </linearGradient>
+
+                    <!-- Gradient for Horizontal Blueline -->
+                    <linearGradient id="bluelineGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                        <stop offset="0%" stop-color="#0284c7"/>
+                        <stop offset="50%" stop-color="#38bdf8"/>
+                        <stop offset="100%" stop-color="#0284c7"/>
+                    </linearGradient>
+
+                    <!-- Gradient for Puck Metallic Accent -->
+                    <linearGradient id="puckRim" x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" stop-color="#475569"/>
+                        <stop offset="100%" stop-color="#0f172a"/>
+                    </linearGradient>
+
+                    <!-- Text Path Arc Definition (Upper Hemisphere) -->
+                    <!-- R=185 around center (250,250) -->
+                    <path id="textArcPath" d="M 75 250 A 175 175 0 0 1 425 250" fill="none"/>
+                </defs>
+
+                <!-- 1. Background Crest Disk -->
+                <circle cx="250" cy="250" r="235" fill="#090d16" stroke="url(#blueRingGradient)" stroke-width="12"/>
+                <!-- Inner Accent Ring -->
+                <circle cx="250" cy="250" r="222" fill="none" stroke="#1e293b" stroke-width="2"/>
+
+                <!-- 2. Curved Arc Text Header -->
+                <text font-family="'Inter', sans-serif" font-weight="800" font-size="19" fill="#94a3b8" letter-spacing="4.5">
+                    <textPath href="#textArcPath" startOffset="50%" text-anchor="middle">
+                        HOCKEY GAME MODDING TOOL
+                    </textPath>
+                </text>
+
+                <!-- 3. Horizontal Blueline Accent -->
+                <g id="blueline">
+                    <!-- Outer Line Glow -->
+                    <rect x="24" y="226" width="452" height="18" fill="url(#bluelineGradient)" rx="4"/>
+                    <!-- Bright Core Line -->
+                    <rect x="24" y="232" width="452" height="6" fill="#e0f2fe" opacity="0.4" rx="2"/>
+                </g>
+
+                <!-- 4. Crossed Hockey Sticks -->
+                <g id="hockeySticks" fill="#ffffff" stroke="#090d16" stroke-width="2">
+                    <!-- Left-to-Right Stick -->
+                    <path d="M 172 135 L 290 282 C 285 292 250 318 205 315 C 190 314 186 308 188 296 L 199 296 C 197 302 201 306 210 306 C 240 306 272 288 277 279 L 184 126 Z"/>
+                    <rect x="175" y="132" width="16" height="6" transform="rotate(-51 175 132)" fill="#38bdf8" stroke="none"/>
+                    <rect x="183" y="142" width="16" height="6" transform="rotate(-51 183 142)" fill="#38bdf8" stroke="none"/>
+                    <rect x="193" y="286" width="14" height="12" transform="rotate(-10 193 286)" fill="#38bdf8" stroke="none"/>
+
+                    <!-- Right-to-Left Stick -->
+                    <path d="M 328 135 L 210 282 C 215 292 250 318 295 315 C 310 314 314 308 312 296 L 301 296 C 303 302 299 306 290 306 C 260 306 228 288 223 279 L 316 126 Z"/>
+                    <rect x="310" y="132" width="16" height="6" transform="rotate(51 310 132)" fill="#38bdf8" stroke="none"/>
+                    <rect x="302" y="142" width="16" height="6" transform="rotate(51 302 142)" fill="#38bdf8" stroke="none"/>
+                    <rect x="293" y="286" width="14" height="12" transform="rotate(10 293 286)" fill="#38bdf8" stroke="none"/>
+                </g>
+
+                <!-- 5. Isometric Hockey Puck -->
+                <g id="puck" transform="translate(250, 155)">
+                    <!-- Puck Shadow -->
+                    <ellipse cx="0" cy="18" rx="34" ry="14" fill="#000000" opacity="0.6"/>
+                    <!-- Puck Base/Side -->
+                    <path d="M -32 0 L -32 12 C -32 20 32 20 32 12 L 32 0 Z" fill="url(#puckRim)" stroke="#090d16" stroke-width="1.5"/>
+                    <!-- Puck Knurling Pattern Line -->
+                    <path d="M -32 6 C -10 14 10 14 32 6" fill="none" stroke="#64748b" stroke-width="1.5" stroke-dasharray="3,2"/>
+                    <!-- Puck Top Surface -->
+                    <ellipse cx="0" cy="0" rx="32" ry="13" fill="#1e293b" stroke="#475569" stroke-width="1.5"/>
+                    <ellipse cx="0" cy="0" rx="22" ry="8" fill="none" stroke="#334155" stroke-width="1"/>
+                </g>
+
+                <!-- 6. Bottom Typography - BLUELINE STUDIO -->
+                <g id="brandText" text-anchor="middle" font-family="'Inter', sans-serif">
+                    <!-- Main Title: BLUELINE -->
+                    <text x="250" y="375" font-weight="900" font-size="46" fill="#ffffff" letter-spacing="4">BLUELINE</text>
+                    <!-- Subtitle: STUDIO -->
+                    <text x="250" y="416" font-weight="800" font-size="34" fill="#38bdf8" letter-spacing="9">STUDIO</text>
+                </g>
+            </svg>

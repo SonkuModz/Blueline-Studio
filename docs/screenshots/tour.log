@@ -1,0 +1,39 @@
+01-home: captured
+02-assets-browse: captured
+03-textures-preview: captured
+04-textures-import: captured
+05-teams: captured
+05b-teams-center-ice: captured
+05c-teams-uniforms: captured
+05d-teams-arena: captured
+05e-teams-other-league: captured
+05f-teams-logo-set: captured
+05g-teams-from-textures: captured
+Exported 1 team images
+Import folder changed 1 files
+05h-teams-export-import: captured
+Revert team removed 1 files
+05i-teams-reverted: captured
+Mods only: 86 uniforms down to 18, 0 not from the mods folder
+05j-teams-modded: captured
+05k-uniform-3d-front: captured
+05l-uniform-3d-back: captured
+05m-uniform-3d-away: captured
+05n-uniform-3d-modded: captured
+05o-uniform-3d-edit: captured
+Uniform edit reverted: 1 files
+05p-uniform-3d-reverted: captured
+06-models: captured
+07-text: captured
+08-database: captured
+09-audio: captured
+10-build: captured
+Compared Second Mod: 4 rows, 2 ticked
+10b-add-mod-review: captured
+Merged: 14 changes became 16
+10c-add-mod-added: captured
+11-play: captured
+11b-play-all-games: captured
+Warning: Both mods changed eng_us.db. One whole file has to win, so the other mod's edits to it are lost.
+Warning: 1 file would replace your mods folder's version.
+Warning: nhl/blueline/second_mod_note.txt is a new path. It installs in the inxp layer, and the game must request this exact name for it to load.

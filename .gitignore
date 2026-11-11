@@ -1,0 +1,9 @@
+# game files and third-party tools are not part of the project
+NHL 19/
+ShadPS4/
+references/
+bin/
+obj/
+.vs/
+*.user
+docs/screenshots/tour*/

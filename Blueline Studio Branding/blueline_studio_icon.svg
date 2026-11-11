@@ -1,0 +1,102 @@
+<svg id="appIconSvg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+                    <defs>
+                        <!-- Main Background Gradient -->
+                        <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" stop-color="#0b1329"/>
+                            <stop offset="50%" stop-color="#070c19"/>
+                            <stop offset="100%" stop-color="#03050b"/>
+                        </linearGradient>
+
+                        <!-- Outer Rim Glow Gradient -->
+                        <linearGradient id="rimGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" stop-color="#38bdf8"/>
+                            <stop offset="50%" stop-color="#0284c7"/>
+                            <stop offset="100%" stop-color="#0369a1"/>
+                        </linearGradient>
+
+                        <!-- Ice Blueline Gradient -->
+                        <linearGradient id="bluelineGlow" x1="0%" y1="0%" x2="100%" y2="0%">
+                            <stop offset="0%" stop-color="#0284c7"/>
+                            <stop offset="50%" stop-color="#38bdf8"/>
+                            <stop offset="100%" stop-color="#0284c7"/>
+                        </linearGradient>
+
+                        <!-- Hockey Stick Left Gradient -->
+                        <linearGradient id="stickGradLeft" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" stop-color="#ffffff"/>
+                            <stop offset="100%" stop-color="#cbd5e1"/>
+                        </linearGradient>
+
+                        <!-- Hockey Stick Right Gradient -->
+                        <linearGradient id="stickGradRight" x1="100%" y1="0%" x2="0%" y2="100%">
+                            <stop offset="0%" stop-color="#f8fafc"/>
+                            <stop offset="100%" stop-color="#94a3b8"/>
+                        </linearGradient>
+
+                        <!-- Puck Top Gradient -->
+                        <linearGradient id="puckTopGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" stop-color="#334155"/>
+                            <stop offset="100%" stop-color="#0f172a"/>
+                        </linearGradient>
+
+                        <!-- Shadow Filters for 3D depth -->
+                        <filter id="dropShadow" x="-20%" y="-20%" width="140%" height="140%">
+                            <feDropShadow dx="0" dy="8" stdDeviation="6" flood-color="#000000" flood-opacity="0.6"/>
+                        </filter>
+                    </defs>
+
+                    <!-- 1. App Icon Rounded Square Background -->
+                    <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bgGradient)" stroke="url(#rimGlow)" stroke-width="12"/>
+                    <!-- Inner Edge Highlight -->
+                    <rect x="22" y="22" width="468" height="468" rx="106" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="3"/>
+
+                    <!-- 2. Horizontal Blueline Traversing Core -->
+                    <g id="centerBlueline" filter="url(#dropShadow)">
+                        <rect x="16" y="238" width="480" height="36" fill="url(#bluelineGlow)"/>
+                        <!-- High Intensity Core Glow -->
+                        <rect x="16" y="250" width="480" height="12" fill="#e0f2fe" opacity="0.6"/>
+                    </g>
+
+                    <!-- 3. Geometric Monogram Backdrop "BS" Subtly Integrated -->
+                    <g id="monogramBG" opacity="0.07" fill="#ffffff">
+                        <path d="M 80 120 H 170 C 200 120 200 160 170 160 H 80 Z"/>
+                        <path d="M 80 160 H 175 C 208 160 208 205 175 205 H 80 Z"/>
+                        <path d="M 432 392 H 342 C 312 392 312 352 342 352 H 432 Z"/>
+                        <path d="M 432 352 H 337 C 304 352 304 307 337 307 H 432 Z"/>
+                    </g>
+
+                    <!-- 4. Crossed Hockey Sticks (Bold, High Contrast Geometry) -->
+                    <g id="hockeySticks" filter="url(#dropShadow)">
+                        <!-- Left Stick (Top-Left to Bottom-Right) -->
+                        <path d="M 136 104 L 334 330 C 330 354 286 386 230 380 C 210 378 206 370 208 354 L 226 354 C 224 362 230 366 242 366 C 274 366 312 342 316 324 L 154 90 Z" fill="url(#stickGradLeft)"/>
+                        <!-- Blade Grip Wraps -->
+                        <rect x="144" y="100" width="22" height="8" transform="rotate(-52 144 100)" fill="#0284c7"/>
+                        <rect x="156" y="115" width="22" height="8" transform="rotate(-52 156 115)" fill="#0284c7"/>
+                        <rect x="234" y="342" width="18" height="18" transform="rotate(-8 234 342)" fill="#38bdf8"/>
+
+                        <!-- Right Stick (Top-Right to Bottom-Left) -->
+                        <path d="M 376 104 L 178 330 C 182 354 226 386 282 380 C 302 378 306 370 304 354 L 286 354 C 288 362 282 366 270 366 C 238 366 200 342 196 324 L 358 90 Z" fill="url(#stickGradRight)"/>
+                        <!-- Blade Grip Wraps -->
+                        <rect x="346" y="100" width="22" height="8" transform="rotate(52 346 100)" fill="#0284c7"/>
+                        <rect x="334" y="115" width="22" height="8" transform="rotate(52 334 115)" fill="#0284c7"/>
+                        <rect x="260" y="342" width="18" height="18" transform="rotate(8 260 342)" fill="#38bdf8"/>
+                    </g>
+
+                    <!-- 5. 3D Hovering Central Hockey Puck -->
+                    <g id="hockeyPuck" transform="translate(250, 240)" filter="url(#dropShadow)">
+                        <!-- Puck Base Side Wall -->
+                        <path d="M -56 0 L -56 22 C -56 40 56 40 56 22 L 56 0 Z" fill="#0f172a" stroke="#0284c7" stroke-width="3"/>
+                        <!-- Knurled Grip Side Pattern -->
+                        <path d="M -56 11 C -20 24 20 24 56 11" fill="none" stroke="#38bdf8" stroke-width="4" stroke-dasharray="6,4" opacity="0.9"/>
+                        <!-- Puck Top Face -->
+                        <ellipse cx="0" cy="0" rx="56" ry="24" fill="url(#puckTopGrad)" stroke="#38bdf8" stroke-width="4"/>
+                        <!-- Inner Accent Ring on Puck -->
+                        <ellipse cx="0" cy="0" rx="38" ry="15" fill="none" stroke="#e0f2fe" stroke-width="3" opacity="0.8"/>
+                        <!-- Monogram BS Center Emblem -->
+                        <text x="0" y="5" font-family="'Inter', sans-serif" font-weight="900" font-size="16" fill="#38bdf8" text-anchor="middle" letter-spacing="2">BS</text>
+                    </g>
+
+                    <!-- 6. Studio Tool Wrench Accent Lines on Top Right Rim -->
+                    <path d="M 380 70 L 420 110" stroke="#38bdf8" stroke-width="8" stroke-linecap="round" opacity="0.4"/>
+                    <path d="M 395 55 L 440 100" stroke="#0284c7" stroke-width="4" stroke-linecap="round" opacity="0.3"/>
+                </svg>
