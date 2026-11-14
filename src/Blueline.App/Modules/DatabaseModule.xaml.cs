@@ -236,6 +236,9 @@ public partial class DatabaseModule : UserControl, IEditorModule
         if (_file == null || _path == null || _services.RequireProject() is not { } project)
             return;
         Grid.CommitEdit(DataGridEditingUnit.Row, true);
+        if (CurrentBlob() != _loadedBlob && !ConfirmDialog.Ask("The database changed",
+                "The project's copy of this database changed after it was opened here (for example glove and helmet colours from the Teams tab). Saving replaces that copy with this one.", "Save anyway"))
+            return;
         _file.RepairCrcs();
         var checks = _file.VerifyCrcs();
         if (checks.Any(c => !c.Matches))

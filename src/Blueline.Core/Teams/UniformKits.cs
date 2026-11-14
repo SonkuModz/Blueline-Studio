@@ -85,6 +85,6 @@ public static class UniformKits
             $"{Folder}jerseytie_skater_{brand}_high.mcd",
             $"{Folder}pant_player_{pants.ToString().ToLowerInvariant()}_high.mcd",
             $"{Folder}sock_player_{sockTuck}_high.mcd",
-            [$"{Folder}skate_bauer_{skateTuck}_high.mcd", $"{Folder}glove_left_high.mcd", $"{Folder}glove_right_high.mcd"]);
+            [$"{Folder}skate_bauer_{skateTuck}_high.mcd"]);
     }
 }

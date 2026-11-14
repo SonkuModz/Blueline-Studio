@@ -67,6 +67,8 @@
                       ToolTip="Imports a folder of images, matching them by game path or by a file name only one texture has" />
               <Button x:Name="RevertTeamButton" Content="Revert team" Margin="0,0,6,4" Click="OnRevertTeam"
                       ToolTip="Puts back every texture of this team that this project changed" />
+              <ToggleButton x:Name="GearButton" Style="{StaticResource Chip}" Content="Glove and helmet colours" Margin="0,0,6,4" Click="OnGearColours"
+                            ToolTip="Each kit's glove and helmet colours, from the game database's team gear table" />
             </WrapPanel>
           </StackPanel>
         </Grid>
@@ -140,8 +142,9 @@
       </Border>
     </DockPanel>
 
-    <!-- The selected file -->
-    <DockPanel Grid.Column="4">
+    <!-- The selected file, or the team's glove and helmet colours -->
+    <ContentControl x:Name="GearHost" Grid.Column="4" Visibility="Collapsed" />
+    <DockPanel x:Name="FilePanel" Grid.Column="4">
       <DockPanel DockPanel.Dock="Top" Margin="2,0,0,2">
         <Button x:Name="CopyButton" DockPanel.Dock="Right" Style="{StaticResource Quiet}" Content="Copy path" FontSize="12" Padding="6,0" Click="OnCopyPath" />
         <TextBlock x:Name="AssetName" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
@@ -176,6 +179,14 @@
               <ComboBox x:Name="UniformTuckBox" Width="66" FontSize="12" Margin="0,0,8,0" SelectionChanged="OnUniformOption" />
               <TextBlock Style="{StaticResource Dim}" Text="Pants" VerticalAlignment="Center" Margin="0,0,4,0" />
               <ComboBox x:Name="UniformPantsBox" Width="66" FontSize="12" SelectionChanged="OnUniformOption" />
+            </WrapPanel>
+            <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+              <TextBlock Style="{StaticResource Dim}" Text="Gloves" VerticalAlignment="Center" Margin="2,0,4,0" />
+              <ComboBox x:Name="GloveModelBox" Width="120" FontSize="12" Margin="0,0,8,0" SelectionChanged="OnUniformOption"
+                        ToolTip="Which glove model to draw. The colours come from this kit's glove row in the team gear table" />
+              <TextBlock Style="{StaticResource Dim}" Text="Helmet" VerticalAlignment="Center" Margin="0,0,4,0" />
+              <ComboBox x:Name="HelmetModelBox" Width="120" FontSize="12" SelectionChanged="OnUniformOption"
+                        ToolTip="Which helmet model to draw. The colours come from this kit's helmet row in the team gear table" />
             </WrapPanel>
             <TextBlock x:Name="UniformNote" DockPanel.Dock="Bottom" Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="2,6,0,0" />
             <controls:ModelViewport x:Name="Uniform" />

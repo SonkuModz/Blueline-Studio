@@ -60,7 +60,7 @@ public sealed class TdbTable
     public uint AllocationType { get; }
     public int Stride { get; }
     public int Allocated { get; }
-    public int Count { get; }
+    public int Count { get; private set; }
     public IReadOnlyList<TdbField> Fields { get; }
     public int RecordsAt { get; }
 
@@ -74,6 +74,21 @@ public sealed class TdbTable
         if (row < 0 || row >= Count)
             throw new ArgumentOutOfRangeException(nameof(row));
         return _file.Data.AsSpan(RecordsAt + row * Stride, Stride);
+    }
+
+    /// <summary>
+    /// Appends a copy of a row in the table's spare allocated space and returns its number. Only the header's row count
+    /// changes; the file keeps its size. The caller must call <see cref="TdbFile.RepairCrcs"/> before saving.
+    /// </summary>
+    public int AddRow(int copyFrom)
+    {
+        if (Count >= Allocated)
+            throw new InvalidOperationException($"{Label} has no spare rows: all {Allocated} are in use.");
+        var source = Record(copyFrom).ToArray();
+        var row = Count++;
+        BinaryPrimitives.WriteUInt16LittleEndian(_file.Data.AsSpan(Slot + 4 + 0x12), (ushort)Count);
+        source.CopyTo(Record(row));
+        return row;
     }
 
     public object Read(int row, TdbField field)

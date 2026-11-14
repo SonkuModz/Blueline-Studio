@@ -30,6 +30,9 @@ const string Usage = """
     blueline team-list <game> [league]           List teams: league, art id, abbreviation, name, file name, assets, arena
     blueline team-assets <game> <team>           List everything filed under a team
     blueline team-logos <project> <game> <team> <image>   Put one PNG or DDS into all of a team's square logos
+    blueline gear <game> <team> [<project> edit ...]   Show or change a team's glove and helmet colours per kit.
+        Edits: gloves:Home=RRGGBB (main colour of the row that kit reads), gloves:Home.z7=RRGGBB (one zone),
+        own:helmet:Away (give the kit its own row), row:900=RRGGBB or row:900.z7=RRGGBB (by the row's index field)
     blueline shad-config <config.toml|.json> [key=value ...]   Show or change shadPS4 settings in that file
     """;
 
@@ -287,6 +290,58 @@ int Run(string[] a)
                     Console.WriteLine($"{item.Outcome,-9} {item.Path}  {item.Detail}");
                 Console.WriteLine($"{result.Imported} imported, {result.Skipped} skipped, {result.Failed} failed");
                 return result.Failed > 0 ? 2 : 0;
+            }
+        case "gear" when a.Length == 3 || a.Length >= 5:
+            {
+                using var vfs = Mount(a[1]);
+                var catalog = OpenTeams(vfs);
+                var team = catalog.Find(a[2]) ?? throw new KeyNotFoundException($"No such team: {a[2]}");
+                var project = a.Length >= 5 ? ModProject.Open(a[3]) : null;
+                var data = project != null && project.TryGet(TeamCatalog.DatabasePath, out var stored) ? project.ReadBlob(stored) : vfs.ReadContent(vfs.Find(TeamCatalog.DatabasePath)!);
+                var file = TdbFile.Parse((byte[])data.Clone());
+                file.ApplyMeta(System.Text.Encoding.UTF8.GetString(vfs.ReadContent(vfs.Find(TeamCatalog.MetaPath)!)));
+                var gear = GearColours.Open(file);
+                var gearTeam = GearColours.GearTeamOf(team) ?? throw new InvalidOperationException($"{team.Name} is not linked to the gear table (NHL clubs only).");
+                var kits = gear.KitsOf(team);
+                GearKit Kit(string label) => kits.FirstOrDefault(k => k.Label.Equals(label, StringComparison.OrdinalIgnoreCase) || k.Variant.ToString() == label)
+                    ?? throw new KeyNotFoundException($"{team.Name} has no kit {label}; kits: {string.Join(", ", kits)}");
+                GearPart Part(string name) => Enum.Parse<GearPart>(name, ignoreCase: true);
+                GearRow ByIndex(int index) => gear.RowsOf(gearTeam).FirstOrDefault(r => r.Index == index) ?? throw new KeyNotFoundException($"No gear row {index} for {team.Name}");
+                int Colour(string hex) => GearColours.TryParseHex(hex, out var rgb) ? rgb : throw new ArgumentException($"Not a colour: {hex}");
+                foreach (var edit in a.Skip(4))
+                {
+                    if (edit.StartsWith("own:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var bits = edit.Split(':');
+                        var (row, added) = gear.GiveOwnRow(team, Kit(bits[2]), Part(bits[1]));
+                        Console.WriteLine($"{edit}: row {row.Index} ({(added ? "added" : "re-pointed")}), variant {row.Variant}");
+                        continue;
+                    }
+                    var (lhs, value) = (edit[..edit.IndexOf('=')], Colour(edit[(edit.IndexOf('=') + 1)..]));
+                    var zone = lhs.Contains(".z") ? int.Parse(lhs[(lhs.IndexOf(".z") + 2)..]) : 0;
+                    var target = lhs.Contains(".z") ? lhs[..lhs.IndexOf(".z")] : lhs;
+                    var targetRow = target.StartsWith("row:", StringComparison.OrdinalIgnoreCase)
+                        ? ByIndex(int.Parse(target[4..]))
+                        : gear.Resolve(gearTeam, Kit(target.Split(':')[1]), Part(target.Split(':')[0])).Row ?? throw new InvalidOperationException($"{target} reads no row");
+                    var changed = zone > 0 ? gear.SetZone(targetRow, zone, value) : gear.SetMain(targetRow, value);
+                    Console.WriteLine($"{edit}: row {changed.Index} " + string.Join(' ', changed.Zones.Select(GearColours.Hex)));
+                }
+                foreach (var kit in kits)
+                    foreach (var part in Enum.GetValues<GearPart>())
+                    {
+                        var r = gear.Resolve(gearTeam, kit, part);
+                        Console.WriteLine($"{kit.Label,-26} {part,-7} {r.Link,-8} {(r.Row == null ? "-" : $"row {r.Row.Index} era {r.Row.Era} variant {r.Row.Variant} main {GearColours.Hex(r.Row.Main)}")}");
+                    }
+                foreach (var row in gear.RowsOf(gearTeam))
+                    Console.WriteLine($"row {row.Index,5} {row.Part,-7} era {row.Era} variant {row.Variant} brand {row.Brand}  {string.Join(' ', row.Zones.Select(GearColours.Hex))}");
+                Console.WriteLine($"{gear.SpareRows:N0} spare rows");
+                if (project != null && a.Length > 4)
+                {
+                    project.Set(TeamCatalog.DatabasePath, gear.Save(), $"{team.Name} glove and helmet colours");
+                    project.Save();
+                    Console.WriteLine($"Saved to {project.Folder}");
+                }
+                return 0;
             }
         case "shad-config" when a.Length >= 2:
             {

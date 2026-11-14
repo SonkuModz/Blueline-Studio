@@ -551,6 +551,308 @@ and new archives join the usual mount order. The log filter hid file opens in th
 folder exists, and what happens to an edit when the mod tool reinstalls. Studio reads the folder only at mount, and
 holds its archives open while running, so another tool may be unable to replace them until Studio closes.
 
+**Seen in a log, 2026-11-13:** with a mods folder present, shadPS4 0.21.1 still opens every `patch_inxp_99_*` and
+`patch_game_99_*` in the install's own `databigs`, in name order, after the stock and mods archives. Whether they win
+over the mods folder's copies is shown only by an on-screen marker (6.10).
+
+### 6.10 Glove and helmet colours per kit, 2026-11-13
+
+**The question.** Editing glove or helmet colours in `nhl_game.db` (Database tab, `blueline db-show`) does nothing in
+game for some kits. Where does the game get them?
+
+**Short answer, verified in game 2026-11-14 (sandbox, Toronto).** The colours are data in
+`stockteamequipmenttable` in `nhl_game.db`:
+
+1. **Gloves are `equipment` 5 and helmets are `equipment` 8**, one row per kit (`era` + `variant`). The
+   equipment labels from `create_team.json` (4 gloves, 7 helmet) do not apply to this table.
+2. **Gear `variant` 1 is Home, 2 is Away, 3 and up match the jersey variant, and 0 is the fallback** for a kit
+   with no row of its own. Toronto and St. Louis have no Home or Away glove row, so both kits use the variant 0
+   glove row and can't differ. That is why only specific kits seemed uneditable. Re-pointing an unused row's `variant`
+   gives the kit its own colour (tested).
+3. **A roster save blocks all of it.** `RosterCustom0` carries its own copy of the table. With the user's save
+   loaded, no edit showed; without it, every edit did. `initial_experience.db` is not read for this.
+
+Neither textures nor the attribute vaults hold these colours. Points below are marked **Read** (from files),
+**Verified** (tested) or **Assumed**.
+
+**Every database (Read).** There are 13 `.db` paths, all in the inxp family. None are in `game_*`, and the loose
+`nhl/` copies are byte-identical to stock `inxp_00`.
+
+| Path | Copies (mount order) |
+|---|---|
+| `kettle/loc/*.db` (7 languages) | `inxp_00`, `patch_inxp_51`-`56`; mods `inxp_00`, `patch_inxp_56` |
+| `gamemodes/database/t3db/nhl_game.db` (111 tables) | `inxp_00`, `patch_inxp_51`-`56`; mods `inxp_00`, `patch_inxp_56` (winner) |
+| `gamemodes/roster/initial_experience.db` (41 tables) | `inxp_00` only; mods `inxp_00` (winner). **Never patched by EA** |
+| `gamemodes/roster/{entry_draft,expansion_draft,proam,threes_campaign}.db` | `inxp_00` only; mods `inxp_00` |
+
+The user's saves add two more. `RosterCustom0` and `RosterOnline0` in `savedata/CUSA11126/` each hold one
+LZ4-framed TDB. The TDB starts at the frame magic `04 22 4D 18`, about 0x130 bytes in after a JSON header, and is
+followed by an 18-byte trailer. The TDB's size field is exact, and all CRCs match.
+
+- `RosterOnline0`: 41 tables, 6,239,164 bytes. This is byte-for-byte the size of `initial_experience.db`, so it is
+  that file's schema.
+- `RosterCustom0`: 54 tables, adding the `custom*` tables.
+
+The profile save (`Profile0`, LZ4 JSON) says `"ActiveRosterType":"Custom"`, `"ActiveRosterSaveSlot":0`. So the
+game boots on `RosterCustom0`.
+
+**Tables that hold gear colour (Read).**
+
+| Table | In | Holds |
+|---|---|---|
+| `stockteamequipmenttable` (5,188 rows) | `nhl_game.db`, `initial_experience.db`, both roster saves | `team`, `equipment`, `era`, `variant`, `brand`, `zone1`-`zone15` as `0xRRGGBB` |
+| `customteamequipmenttable`, `leagueteamequipmenttable` | `nhl_game.db`, `RosterCustom0` | the same, for created teams and franchise leagues (league one empty) |
+| `stockteamjerseys` (1,574) | the same four files | per kit: `teamid`, `style` (0 adidas, 1 rbk, 2 nineties, from the kit sheets), `variant` (0 home, 1 away, 2 `two` ...), `helmetlogo`, `islightcolor` |
+| `exhibitionskaterequipment` | every roster-shaped file | per player `gloves` and `helmetbrand`: **brands only, no colour** |
+| `exhibitionresortskaterextras` | `nhl_game.db`, `initial_experience.db`, saves | `glovezone1`-`15color`, `helmetzone1`-`3color` per art id, light and dark. All `1B1B1B` placeholders; World of CHEL casual gear |
+
+The schema puts the team tables in `savegroups="allloaded,rosters,rosterupdate"`. They are roster data, written
+whole into a roster save and read back from it.
+
+**What `equipment` means (Read).** `creation_zone/create_team.json` writes `CustomTeamEquipmentTable` with
+explicit keys:
+
+| Value | Gear |
+|---|---|
+| 0 | trapper |
+| 1 | blocker |
+| 2 | pads |
+| 3 | goalie stick |
+| **4** | **gloves** |
+| 5 | socks |
+| 6 | pants |
+| **7** | **helmet** |
+| 8 | jersey |
+| 9 | jersey font |
+| 10-12 | logo colours |
+
+It also writes `variant` 0, 1, 2 for home, away and alternate. Gloves have 12 mask zones and helmets 3, matching
+the program's render inputs `Skater_Render_GloveColorZone1..12` and `HelmetColorZone1..3`. **Assumed:** stock rows
+use the same numbering, since it is one schema.
+
+**What the stock table actually contains (Read, same in every copy).** For the 31 NHL clubs (`team` 0 to 30):
+
+- **Helmet (7): no rows.** Pants (6) and font (9) have none either.
+- **Gloves (4): one row per era** (`era` 0, 1, 2), always `variant` 0. Nothing changes them per kit.
+- **Socks (5) and jersey (8): rows per `era` and `variant`.** Many jersey rows use only zones 1 to 3, which is the
+  helmet's zone count.
+- **Only the nine template teams 391 to 400 have helmet rows and per-kit glove rows.** These are EASHL, HUT, Drop
+  In, and the mod's Kraken on 399, at `variant` 1 to 3.
+
+So for NHL kits the helmet colour cannot come from a helmet row. **Assumed, by elimination:** it comes from the
+kit's jersey (8) row, or from the club's era glove row. The probe below answers that.
+
+**Team numbering: the gear table is off by one (Read; confirmed for St. Louis by the user's own edit).**
+`stockteamequipmenttable.team` is **not** the `exhibitionteams` index that `stockteamcolorstable` and
+`stockteamjerseys` use. For NHL clubs it reads as index + 1.
+
+| Gear `team` | Colours in its rows | Club | `exhibitionteams` index |
+|---|---|---|---|
+| 1 | orange | Anaheim | 0 |
+| 3 | gold | Boston | 2 |
+| 11 | red | Detroit | 10 |
+| 12 | orange, navy | Edmonton | 11 |
+| 22 | orange | Philadelphia | 21 |
+| 25 | navy, gold, royal blue | St. Louis | 24 |
+| 26 | teal `12678C` | San Jose | 25 |
+
+The same `+1` matches `exhibitionteams.mascotbody`. Near the end of the list it is unclear: gear 31 has
+Washington-like colours, and Vegas (index 30) has mascot 33, so check those clubs by colour first.
+
+**Anyone editing this table by team index lands on the neighbouring club.** For example, team 24 is Pittsburgh's
+gear, not St. Louis's. The Database tab and `db-show` show the raw number with no name, so this alone can make
+"specific teams' gloves and helmets" look uneditable.
+
+**Duplicate keys (Read).** Three glove keys exist twice with different colours. Editing the copy the game skips
+would do nothing.
+
+| Team | `era`, `variant` | Rows |
+|---|---|---|
+| Winnipeg (gear `team` 2) | era 1, variant 0 | `index` 76 and 77 |
+| 78 | era 0, variant 0 | |
+| 309 | era 1, variant 0 | |
+
+**Why the obvious values are ignored.**
+
+1. **The save wins (Read; replacement Assumed, not yet seen in game).** The game boots on `RosterCustom0`, which
+   carries its own full `stockteamequipmenttable`, `stockteamjerseys` and `exhibitionteams`. The game reads the
+   loaded roster's copy, so an edit to `nhl_game.db`, the file the Database tab opens first, never reaches the
+   screen while a roster save is active.
+
+   **Concrete case: St. Louis Blues, the table's `team` 25, rows keyed `era` 0, `variant` 0** (which kit uses them
+   is not confirmed). The user changed St. Louis's gloves and helmet themselves, and the game wrote that edit as
+   `team` 25 (see "Team numbering" below).
+
+   | Rows | Mods `nhl_game.db` | `RosterCustom0` |
+   |---|---|---|
+   | Gloves (4), every era | zones 4-9 `202020` | zones 4-9 `0072CE` |
+   | Jersey (8), the 3-zone helmet-like set | `12192E` / `202020` / `E7E7E7` | `0072CE` everywhere |
+   | Socks (5) | `12192E` | `0072CE` |
+
+   The save changes 28 St. Louis rows across all eras, goalie gear (1 to 3) included. `RosterOnline0` (Overtime's roster) changes 34 rows of
+   teams 38, 65 and 398.
+2. **Possibly the wrong database even without a save.** **Assumed** from the size match above: new rosters are
+   seeded from `initial_experience.db`, not `nhl_game.db`. Toronto's two colour sets in the probe test this.
+   **Read:** in stock that file is still the launch-day table (6,688 rows): EA's patches 51 to 56 updated only
+   `nhl_game.db` (5,188 rows), and 2,614 keys differ between the two. Puck Peak's mods folder ships both with the
+   same table.
+3. **No row exists to edit** for an NHL club's helmet, or for a glove that should change by kit, as shown above.
+
+**Not the source (Read).**
+
+- **Textures.** Gloves are one sheet set per model (`glove_{left,right}_<brand>_<model>_{cm,nm,coeff,am,dm,tm1-4}`).
+  Helmets are per model (`helmet_<model>` and `helmet_current_<model>_{nhl,ahl,generic}`). Both are recoloured at
+  run time through `tm` zone masks (VISUALS 8.4). Only the logo decal is per kit
+  (`helmetlogo_<maker>_<club>_<kit>_0`). No team colours are baked in.
+- **Attribute vaults.** `gccollections` names the render inputs and has `nhl_skaterglovestexturepack`,
+  `nhl_skaterhelmettexturepack` and `nhl_skatercolorpack` classes. No team- or kit-named colour collection exists
+  among its strings.
+- **`isfixtexture`.** In `creation_zone_csv` this applies to skates and sticks, not gloves or helmets.
+
+**Probe patch and sandbox (Verified to boot; colours not yet seen).** The first build used team-list numbers (27
+and 2), so it hit Tampa Bay and Winnipeg. It was rebuilt on 2026-11-13 with gear `team` 28 (Toronto) and 3
+(Boston). The rebuilt probe colour-codes those two clubs. Toronto's rows are set differently in each database, so the colour on screen names the winning file:
+
+| Toronto rows | In `nhl_game.db` | In `initial_experience.db` |
+|---|---|---|
+| Gloves (4) | red `FF0000` | yellow `FFFF00` |
+| Socks (5) | green `00FF00` | magenta `FF00FF` |
+| Jersey (8) | blue `0000FF` | cyan `00FFFF` |
+
+Boston's rows get one colour per row, the same in both databases:
+
+| Boston glove row (4) | Colour |
+|---|---|
+| era 0 | orange `FF8000` |
+| era 1 | pink `FF66CC` |
+| era 2 | purple `7F00FF` |
+
+| Boston jersey row (8) | Colour |
+|---|---|
+| era 0, variant 0 | cyan |
+| era 0, variant 2 | yellow |
+| era 0, variant 3 | magenta |
+| era 0, variant 4 | white |
+| era 1, variant 0 | brown |
+| era 1, variant 2 | orange |
+| era 1, variant 3 | grey |
+| era 1, variant 4 | mint `00FF80` |
+| era 3, variant 0 | green |
+| era 3, variant 2 | red |
+| era 3, variant 4 | blue |
+
+The full row-by-row list is in the probe project's `legend.tsv`. Boston has no duplicate glove keys; the duplicates
+listed above belong to Winnipeg (gear `team` 2) and teams 78 and 309.
+
+The title-screen `PressStart` text ("Press") should read `GEAR PROBE`, which shows the eng_us edit loaded. The sandbox is
+hardlinked and includes the mods folder, with networking off. The game's EA telemetry posts are logged as
+`OFFLINE POST` / `TRANSPORT FAIL`.
+
+**Several databases in one archive break the boot (seen 2026-11-13/14).** A check that waits only for
+`HideSplashScreen` misses this. Wait until the log opens `nhl/ui/lua/saveload/rostersaveloadutility.lreq`: that is
+the front end loading. On a good boot it appears about 25 s after launch.
+
+| `patch_inxp_99` archives in the sandbox | Result |
+|---|---|
+| none of the probe archives | menus in 25 s |
+| `nhl_game.db`, `initial_experience.db`, `eng_us.db` in one archive | crash `0xc0000005` in "Loading Job 3", twice |
+| `nhl_game.db` + `eng_us.db` in one archive (edited), with or without the ie archive | **hangs** after `HideSplashScreen`: the log stops after loading `libSceJson2`, the `ant`/`DIME` threads and audio never start, no menus after 6 min |
+| `nhl_game.db` unchanged copy, alone | menus in 25 s |
+| edited `nhl_game.db` alone | menus in 25 s |
+| edited `eng_us.db` alone | menus in 25 s |
+| edited `nhl_game.db`, edited `eng_us.db`, edited `initial_experience.db`, three archives | menus in 25 s |
+
+So the database edits themselves are fine; the trouble is two of these databases sharing one archive. It looks like
+the colour-cube freeze (an XML and its cube freeze together, fine apart). Why it happens is unknown. Until it is
+understood, give each `.db` its own archive. Studio's `OverlayBuilder` puts every inxp change into one
+`patch_inxp_99_<mod>.big`, so a Studio mod that edits two databases will hit this.
+
+The sandbox's other mounts (`/data`, `/temp0`, `/download0`) and its log all point into the sandbox `user` folder,
+and the user's real saves and configs were unchanged afterwards. Runs A (user's saves) and B (`Profile0` only) differ
+only once the game reads the saves, after a button is pressed at the title screen.
+
+**To change a kit's glove or helmet colour, as far as is known.**
+
+- Edit `stockteamequipmenttable` in **both** `nhl_game.db` and `initial_experience.db`, each `.db` in its own archive.
+- Make sure the game is not on a roster save that carries its own copy. The other route is to write the roster save
+  itself, which Studio cannot do yet. That would need LZ4 re-framing, the header size fields and the `CRCValue`,
+  whose algorithm is unknown.
+- Which row a given kit reads is unconfirmed until someone looks at the probe in game.
+
+**Probe result, run A (user's saves, 2026-11-14).** Play Now team select, Toronto home preview: gloves and jersey
+are stock Toronto blue. Neither the `nhl_game.db` colours (red gloves, `0000FF` jersey) nor the
+`initial_experience.db` colours (yellow gloves, cyan jersey) show. So with the user's roster save active, both
+database copies are ignored for this kit. Run B (no roster save) decides whether the save is the reason.
+
+**Probe result, run B (`Profile0` only, no roster save, 2026-11-14).** Toronto's gloves are bright green
+`00FF00` on every kit (Home and "The Digital 6"). Green was the colour set on Toronto's **equipment 5** rows in
+`nhl_game.db`. The equipment 4 rows were set to red, which shows nowhere. So:
+
+- **Gloves are `equipment` 5 in `stockteamequipmenttable`**, not 4. The `create_team.json` enum does not match this
+  table, so treat the equipment labels above as unconfirmed. Stock Toronto equipment 5 zone colours are navy
+  `052E6C`, which fits gloves.
+- Equipment 5 has one row per kit (`era` + `variant`), 14 rows for Toronto, so **per-kit glove colours are
+  possible**. All kits turned green only because the probe painted every row.
+- **The game reads `nhl_game.db`**; the `initial_experience.db` colour (`FF00FF` on equipment 5) did not show.
+- **The user's roster save was what blocked the edit:** the same archives showed nothing in run A.
+- The helmet looked a brighter blue than in run A, possibly the probe's `0000FF` on equipment 8. Unconfirmed.
+
+A follow-up probe (`kitmap`) gives each Toronto equipment 5 row its own colour and sets every equipment 8 row orange.
+Its legend is below.
+
+| Colour | Row (`index`) | era | variant |
+|---|---|---|---|
+| red | 991 | 3 | 0 |
+| yellow | 992 | 3 | 3 |
+| cyan | 993 | 3 | 4 |
+| magenta | 994 | 3 | 5 |
+| white | 995 | 3 | 6 |
+| black | 996 | 0 | 0 |
+| green | 997 | 0 | 0 (brand 59) |
+| pink | 998 | 0 | 11 |
+| purple | 999 | 0 | 7 |
+| brown | 1000 | 0 | 10 |
+| grey | 1001 | 1 | 0 |
+| teal | 1002 | 1 | 4 |
+| dark red | 1003 | 1 | 5 |
+| tan | 1004 | 1 | 6 |
+
+**Kit-map result (run B, 2026-11-14), Play Now team select, Toronto.** Two runs: the kit map as legended above, then
+the same with row 995 (era 3 / variant 6, white) re-pointed to `variant` 1.
+
+| Kit | Jersey (`style` 0) variant | Run 1 gloves | Run 2 gloves | Gear row it reads |
+|---|---|---|---|---|
+| Home | 0 | red | **white** | gear variant **1**; with no such row, falls back to variant 0 |
+| Away | 1 | red | red | gear variant **0** (row 991) |
+| Alternate (black) | 3 | yellow | | gear variant 3 (row 992) |
+| 2018-19 Alternate (St. Pats) | 5 | magenta | | gear variant 5 (row 994) |
+
+- Home read gear variant 1 once such a row existed. Away kept reading variant 0 here, but the St. Louis test below
+  shows Away reads **variant 2** when it exists; variant 0 is a fallback, not Away. Variants 3 and 5 matched the
+  jersey variant.
+- **A kit with no row of its own uses the gear variant 0 row.** Stock Toronto has no variant 1 glove row,
+  so Home and Away shared gloves, and neither could be changed alone. This is the "specific uniforms" problem.
+- **Fix that works:** re-point a row nobody uses (here era 3 / variant 6; no adidas jersey has variant 6) to the
+  missing variant and colour it. Home got its own gloves; Away kept its own. Adding a new row was not needed.
+- Gear `era` 3 goes with jersey `style` 0 (adidas). How eras 0 and 1 map to `style` 1 and 2 is not yet seen.
+- **The helmet was orange on every kit, so `equipment` 8 sets the helmet colour.** The jerseys did not change
+  (they are textures). Toronto has equipment 8 rows for era 3 variants 0, 1, 3, 5 and 6, so per-kit helmets should
+  work without re-pointing; not yet tested kit by kit.
+- All of this only shows when no roster save with its own table is loaded (run A, with the user's `RosterCustom0`,
+  showed none of it).
+
+**Working edit: St. Louis (gear `team` 25), verified in the sandbox 2026-11-14.** One `nhl_game.db` archive,
+`patch_inxp_99_stl-kit-colours.big`. Each row's main colour (the zone 1 value) was replaced in every zone holding it;
+the other zones were kept.
+
+| Row | Equipment, era / variant | Change | Seen on |
+|---|---|---|---|
+| 900 | gloves, 3 / 0 (fallback) | main `0072CE`, zone 7 `FFB81C` | Home and Away gloves; zone 7 is the CCM logo |
+| 907 | helmet, 3 / 1 | `0072CE` | Home helmet |
+| 908 | helmet, 3 / 2 | `FFFFFF` | Away helmet (**proves gear variant 2 = Away**) |
+| 901 | gloves, 3 / 3 | `041E42` (zone 6 cream, zone 8 gold kept) | Alternate gloves; the logo showed cream, so zone 6 is the logo on this row |
+| 909 | helmet, 3 / 3 | `041E42` | Alternate helmet |
+
 ## 7. Requirements that follow
 
 1. **Never modify game files.** Install by adding `patch_inxp_99_*.big` / `patch_game_99_*.big`; uninstall by
@@ -576,7 +878,7 @@ holds its archives open while running, so another tool may be unable to replace 
 | Audio in `game_80` + `inxp_40` only | **False.** Also patched in `patch_game_91/92/93` and `patch_inxp_51..` |
 | Same-format texture replace needs Noesis/`orbis-image2gnf` | **False.** Native decode and encode, measured in `tests/Blueline.Tests/RealGameTests.cs` (BC7 43 dB, BC1 59 dB) |
 | 5-6 MB archive growth ceiling, `pant_nm` cannot move | Only tested in-place on NHL 21. Irrelevant to overlays; recheck if ever seen |
-| Equipment colour tables ignored at render | Not retested on NHL 19 |
+| Equipment colour tables ignored at render | **Explained** (6.10): gloves are equipment 5 and helmets 8; gear variant 1 Home, 2 Away, 0 fallback; a loaded roster save overrides the table. Seen in game |
 | Texpack vault gating for new jersey slots | Not retested on NHL 19 |
 
 ## 9. Still unknown
@@ -590,4 +892,8 @@ holds its archives open while running, so another tool may be unable to replace 
 - Where `overlays_2x.big` sits in the mount order. It is named explicitly, but its position is not established.
 - Three nested archives (`anim/faceposer.big`, `gamedata/gps.big`, `gamemodes/proam/proam_download.big`) are not
   opened by this tool's file system, so their contents do not appear in it.
-- Roster save behaviour: the old project found saves override the archive on NHL 21; not retested on NHL 19.
+- Roster saves: seen in game (6.10) that a loaded `RosterCustom0` overrides `stockteamequipmenttable` edits. Whether
+  every roster table behaves the same is not tested.
+- Gear `era` 0 and 1 against jersey `style` 1 and 2, and per-kit helmet rows, are not yet seen in game (6.10).
+- Save `CRCValue` (54-character text in each roster save's JSON header): algorithm unknown, so saves are read-only
+  for now.

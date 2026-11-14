@@ -4,11 +4,13 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using BCnEncoder.Encoder;
 using Blueline.App.Controls;
 using Blueline.App.Shell;
 using Blueline.Core;
 using Blueline.Core.Teams;
+using Blueline.Formats.Tdb;
 using Blueline.Formats.Textures;
 using Microsoft.Win32;
 using Rectangle = System.Windows.Shapes.Rectangle;
@@ -107,6 +109,8 @@ public partial class TeamsModule : UserControl, IEditorModule
     private string? _uniformKey;
     private int _uniformGeneration;
     private bool _uniformLoading;
+    private readonly GearColoursPanel _gearPanel;
+    private int _gearVersion;
 
     public TeamsModule(AppServices services)
     {
@@ -117,6 +121,14 @@ public partial class TeamsModule : UserControl, IEditorModule
         UniformTuckBox.ItemsSource = Enum.GetValues<UniformTuck>();
         UniformPantsBox.ItemsSource = Enum.GetValues<UniformPants>();
         UniformSizeBox.SelectedIndex = UniformTuckBox.SelectedIndex = UniformPantsBox.SelectedIndex = 0;
+        _gearPanel = new GearColoursPanel(services);
+        _gearPanel.CloseRequested += () => ShowGearColours(false);
+        _gearPanel.Edited += () =>
+        {
+            _gearVersion++;
+            _uniformKey = null;
+        };
+        GearHost.Content = _gearPanel;
         ShowNoSelection();
         SetTeamButtons();
         DropTarget.Attach(PreviewCard, f => File.Exists(f) && ImageFiles.IsSupported(f), files => _ = ReplaceSelected(files[0]), PreviewCard);
@@ -131,6 +143,18 @@ public partial class TeamsModule : UserControl, IEditorModule
     public IReadOnlyList<TeamTile> ShownTiles => _shown;
     public bool UniformBusy => _uniformLoading;
     public ModelViewport UniformView => Uniform;
+    public GearColoursPanel GearPanel => _gearPanel;
+
+    private void OnGearColours(object sender, RoutedEventArgs e) => ShowGearColours(GearButton.IsChecked == true);
+
+    /// <summary>Swaps the right-hand column between the selected file and the team's glove and helmet colours.</summary>
+    public void ShowGearColours(bool on)
+    {
+        GearButton.IsChecked = on;
+        GearHost.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        FilePanel.Visibility = on ? Visibility.Collapsed : Visibility.Visible;
+        _gearPanel.SetShowing(on);
+    }
 
     public void Activated()
     {
@@ -178,6 +202,13 @@ public partial class TeamsModule : UserControl, IEditorModule
         ModsOnly.Visibility = _services.Workspace.Vfs?.Install.ModsFolder != null ? Visibility.Visible : Visibility.Collapsed;
         var workspace = _services.Workspace;
         var paths = index.Rows.Where(r => r.File != null).Select(r => r.Path).ToList();
+        var pathSet = paths.ToHashSet(StringComparer.Ordinal);
+        foreach (var (box, part, wanted) in new[] { (GloveModelBox, GearPart.Gloves, GearPreview.DefaultGloves), (HelmetModelBox, GearPart.Helmet, GearPreview.DefaultHelmet) })
+        {
+            var models = GearPreview.Models(part, pathSet);
+            box.ItemsSource = models;
+            box.SelectedItem = models.FirstOrDefault(m => m.Name == wanted) ?? models.FirstOrDefault();
+        }
         GalleryMessage.Text = "Reading the team table";
         Task.Run(() => TeamCatalog.Load(workspace.ReadCurrent, paths)).ContinueWith(task =>
         {
@@ -236,8 +267,15 @@ public partial class TeamsModule : UserControl, IEditorModule
 
     private void OnTeamChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (Teams.SelectedItem is TeamRow row)
-            ShowTeam(row.Team);
+        if (Teams.SelectedItem is not TeamRow row)
+            return;
+        if (!_gearPanel.SetTeam(row.Team))
+        {
+            // Unsaved colours were kept: stay on their team.
+            Teams.SelectedItem = Teams.Items.Cast<TeamRow>().FirstOrDefault(r => r.Team == _team);
+            return;
+        }
+        ShowTeam(row.Team);
     }
 
     /// <summary>Selects a team by name, widening the list if the current filter hides it.</summary>
@@ -312,6 +350,9 @@ public partial class TeamsModule : UserControl, IEditorModule
         var edited = _art.Count(a => _services.Workspace.IsEdited(a.Path));
         LogoSetButton.IsEnabled = hasLogos;
         ImportPackButton.IsEnabled = _team != null;
+        GearButton.IsEnabled = _team != null && GearColours.GearTeamOf(_team) != null;
+        if (!GearButton.IsEnabled && GearButton.IsChecked == true)
+            ShowGearColours(false);
         RevertTeamButton.IsEnabled = edited > 0;
         var textures = _art.Count(a => a.IsTexture);
         TeamCounts.Text = _team == null ? "" : $"{textures:N0} textures, {_art.Count - textures:N0} models" + (edited > 0 ? $", {edited:N0} edited" : "");
@@ -598,7 +639,12 @@ public partial class TeamsModule : UserControl, IEditorModule
         if (vfs == null || UniformSizeBox.SelectedItem is not UniformSize size || UniformTuckBox.SelectedItem is not UniformTuck tuck || UniformPantsBox.SelectedItem is not UniformPants pants)
             return;
         var showOriginal = ShowOriginal.IsChecked == true && ShowOriginal.Visibility == Visibility.Visible;
-        var key = $"{kit.Key}|{size}|{tuck}|{pants}|{showOriginal}";
+        var gloveModel = GloveModelBox.SelectedItem as GearModel;
+        var helmetModel = HelmetModelBox.SelectedItem as GearModel;
+        var team = _team;
+        // Unsaved colours in the gear panel are shown as they are; otherwise the project's (or the game's) table is read.
+        var liveGear = _gearPanel.Team == team ? _gearPanel.Gear : null;
+        var key = $"{kit.Key}|{size}|{tuck}|{pants}|{showOriginal}|{gloveModel}|{helmetModel}|{_gearVersion}";
         if (key == _uniformKey)
             return;
         _uniformKey = key;
@@ -625,7 +671,9 @@ public partial class TeamsModule : UserControl, IEditorModule
             Add(models.Sock, kit.Sock == null ? null : SheetBitmap(Read(kit.Sock)));
             foreach (var gear in models.Gear)
                 Add(gear, null);
-            return ModelViewport.Prepare(parts);
+
+            var gearNote = AddGear(team, kit, liveGear, Read, parts, gloveModel, helmetModel);
+            return (ModelViewport.Prepare(parts), gearNote);
         }).ContinueWith(task =>
         {
             if (generation != _uniformGeneration)
@@ -639,7 +687,8 @@ public partial class TeamsModule : UserControl, IEditorModule
                 UniformNote.Text = "";
                 return;
             }
-            Uniform.Show(task.Result, keepView, closeness: 2.1);
+            var (prepared, gearNote) = task.Result;
+            Uniform.Show(prepared, keepView, closeness: 2.1);
             if (!keepView)
                 Uniform.SetView(0.45, 0.12);
             _uniformEverShown = true;
@@ -647,8 +696,69 @@ public partial class TeamsModule : UserControl, IEditorModule
             var missing = new[] { kit.Pant == null ? "pants" : null, kit.Sock == null ? "socks" : null }.OfType<string>().ToList();
             UniformNote.Text = kit.Label + (showOriginal ? " (original)" : "")
                 + (missing.Count > 0 ? $". The game has no {string.Join(" or ", missing)} sheet for this kit, so they are grey" : "")
-                + ". Numbers, names, shine and fabric detail are not drawn; gloves and skates stay grey.";
+                + ". " + gearNote + " Numbers, names, shine and fabric detail are not drawn; skates stay grey.";
         }, TaskScheduler.FromCurrentSynchronizationContext());
+    }
+
+    /// <summary>
+    /// Adds the gloves and helmet, tinted with the zone colours of the rows this kit reads, and says where the colours came from.
+    /// Runs off the UI thread; a live gear table from the panel is only read here, never written.
+    /// </summary>
+    private string AddGear(TeamInfo? team, UniformKit kit, GearColours? live, Func<string, byte[]?> read, List<ModelPart> parts, GearModel? gloves, GearModel? helmet)
+    {
+        GearColours? gear = live;
+        if (gear == null && read(TeamCatalog.DatabasePath) is { } data)
+        {
+            var file = TdbFile.Parse((byte[])data.Clone());
+            if (read(TeamCatalog.MetaPath) is { } meta)
+                file.ApplyMeta(System.Text.Encoding.UTF8.GetString(meta));
+            gear = GearColours.Open(file);
+        }
+        var gearKit = team != null ? gear?.KitFor(team, kit) : null;
+        var gearTeam = team != null ? GearColours.GearTeamOf(team) : null;
+        var notes = new List<string>();
+        foreach (var model in new[] { gloves, helmet }.OfType<GearModel>())
+        {
+            var row = gearKit != null && gearTeam is { } t ? gear!.Resolve(t, gearKit, model.Part).Row : null;
+            if (row == null)
+                notes.Add($"{model.Part.ToString().ToLowerInvariant()} grey (no gear row for this kit)");
+            foreach (var (mesh, prefix) in model.Pieces)
+            {
+                if (read(mesh) is not { } meshData)
+                    continue;
+                BitmapSource? texture = null;
+                if (row != null && Decode(read(model.DetailMap(prefix))) is { } detail)
+                {
+                    var masks = Enumerable.Range(1, 4).Select(n => Decode(read(GearModel.MaskMap(prefix, n)))).ToList();
+                    texture = ToBitmap(GearPreview.Tint(detail, Decode(read(GearModel.AmbientMap(prefix))), masks, row.Zones));
+                }
+                parts.Add(new ModelPart(Blueline.Formats.Models.McdFile.Parse(meshData), texture));
+            }
+        }
+        if (gearKit != null && kit.Kit is "two" or "three")
+            notes.Add($"this kit is taken to be {gearKit.Label}");
+        return notes.Count == 0 ? "Gloves and helmet use this kit's gear colours." : "Gloves and helmet use this kit's gear colours: " + string.Join("; ", notes) + ".";
+    }
+
+    /// <summary>A texture's mip at most 512 wide, or null if it is missing or unreadable.</summary>
+    private static RgbaImage? Decode(byte[]? content)
+    {
+        if (content == null || GameTexture.TryOpen(content) is not { Blocker: null } texture)
+            return null;
+        var mip = 0;
+        while (mip + 1 < texture.MipCount && Math.Max(texture.Width >> mip, texture.Height >> mip) > 512)
+            mip++;
+        return texture.DecodeMip(mip);
+    }
+
+    private static BitmapSource ToBitmap(RgbaImage image)
+    {
+        var pixels = new byte[image.Pixels.Length];
+        for (var i = 0; i + 3 < pixels.Length; i += 4)
+            (pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]) = (image.Pixels[i + 2], image.Pixels[i + 1], image.Pixels[i], 255);
+        var bitmap = BitmapSource.Create(image.Width, image.Height, 96, 96, PixelFormats.Bgr32, null, pixels, image.Width * 4);
+        bitmap.Freeze();
+        return bitmap;
     }
 
     /// <summary>A sheet for wrapping on a mesh, at most 1024 wide. Its alpha holds other data, so it is left out.</summary>

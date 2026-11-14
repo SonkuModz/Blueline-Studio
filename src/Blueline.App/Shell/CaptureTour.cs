@@ -217,6 +217,49 @@ public sealed class CaptureTour(MainWindow window, bool pressPlay = false)
                 await UniformSettled();
             });
 
+            await Step("05x1-gear-colours", async () =>
+            {
+                teams.ShowUniform(false);
+                teams.SelectTeam("St. Louis Blues");
+                await TeamsSettled(teams);
+                teams.ShowGearColours(true);
+                await Idle();
+            });
+
+            await Step("05x2-gear-colours-own-row", async () =>
+            {
+                // Away gloves share the fallback row with Home; giving them their own row lets them differ.
+                var panel = teams.GearPanel;
+                panel.KitBox.SelectedItem = panel.KitBox.Items.Cast<Core.Teams.GearKit>().First(k => k.Label == "Away");
+                await Idle();
+                panel.GiveOwnRow((Core.Teams.GearKit)panel.KitBox.SelectedItem, Core.Teams.GearPart.Gloves);
+                panel.SetKitMain(Core.Teams.GearPart.Gloves, 0xFFFFFF);
+                await Idle();
+                panel.SaveToProject();
+                await Idle();
+            });
+
+            await Step("05x3-gear-colours-closed", async () =>
+            {
+                teams.ShowGearColours(false);
+                await Idle();
+            });
+
+            await Step("05x4-uniform-3d-gear-away", async () =>
+            {
+                // The saved edit gives St. Louis white Away gloves; the 3D view should draw them with the kit.
+                teams.SelectCategory(Core.Teams.TeamArtCategory.Uniforms);
+                teams.SelectAsset("nhl/data/kettle/rendering/characters/player/jersey_adidas_stlouis_away_cm.gnf");
+                teams.ShowUniform(true);
+                await UniformSettled();
+            });
+
+            await Step("05x5-uniform-3d-gear-home", async () =>
+            {
+                teams.SelectAsset("nhl/data/kettle/rendering/characters/player/jersey_adidas_stlouis_home_cm.gnf");
+                await UniformSettled();
+            });
+
             if (services.Workspace.Vfs.Install.ModsFolder != null)
                 await Step("05n-uniform-3d-modded", async () =>
                 {
