@@ -95,6 +95,7 @@ The tests read the real game, so they need the dump at `NHL 19/CUSA11126` inside
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the code is organised
 - [docs/RESEARCH.md](docs/RESEARCH.md): file format findings and old claims retested
+- [docs/VISUALS.md](docs/VISUALS.md): how the game's graphics work, from the program and its data: frame pipeline, materials, lighting, characters, arenas, effects, post-processing
 - [docs/SPORTSNET_BUG.md](docs/SPORTSNET_BUG.md): measurements for a custom score bug
 - [CONTRIBUTING.md](CONTRIBUTING.md): how to report a problem or send a change
 
