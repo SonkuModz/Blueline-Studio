@@ -305,6 +305,11 @@ public partial class MainWindow : Window
             if (NewProjectFlow())
                 _ = EnterWorkspace();
         };
+        Start.PuckPeakRequested += async () =>
+        {
+            if (await PuckPeakFlow())
+                _ = EnterWorkspace();
+        };
         Start.BrowseRequested += () => _ = EnterWorkspace();
         Start.ChooseGameRequested += () =>
         {
@@ -611,6 +616,7 @@ public partial class MainWindow : Window
         MenuUndo.IsEnabled = project?.CanUndo == true;
         MenuRedo.Content = project?.RedoLabel is { } redo ? $"Redo: {redo}" : "Redo";
         MenuRedo.IsEnabled = project?.CanRedo == true;
+        MenuPuckPeak.Visibility = _services.Workspace.Vfs is { } vfs && PuckPeakMod.Find(vfs.Install) != null ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void OnMenuUndo(object sender, RoutedEventArgs e)
@@ -629,6 +635,40 @@ public partial class MainWindow : Window
     {
         ProjectMenu.IsOpen = false;
         NewProjectFlow();
+    }
+
+    private void OnMenuPuckPeak(object sender, RoutedEventArgs e)
+    {
+        ProjectMenu.IsOpen = false;
+        _ = PuckPeakFlow();
+    }
+
+    /// <summary>
+    /// Makes a new project from the Puck Peak Overtime mod beside the game: every file its manifest says it changed, copied
+    /// from the mods folder, as one undo step.
+    /// </summary>
+    private async Task<bool> PuckPeakFlow()
+    {
+        if (_services.Workspace.Vfs is not { } vfs || PuckPeakMod.Find(vfs.Install) is not { } mod)
+        {
+            _services.Notify($"No Puck Peak Overtime mod was found beside the game ({PuckPeakMod.ManifestName} in the mods folder).");
+            return false;
+        }
+        var dialog = new NewProjectDialog { Owner = this, InitialName = "Puck Peak Overtime" };
+        if (dialog.ShowDialog() != true || _services.CreateProject(dialog.ProjectFolder, dialog.ProjectName) is not { } project)
+            return false;
+        PuckPeakImportResult? copied = null;
+        await _services.Jobs.RunAsync($"Opening Puck Peak Overtime ({mod.FileCount:N0} files)", context =>
+            mod.Copy(project, new Progress<(string Stage, int Done, int Total)>(p => context.Progress($"{p.Stage}: {p.Done:N0} of {p.Total:N0}", p.Done, p.Total)), context.Cancel),
+            result => copied = result);
+        if (copied == null)
+            return true;
+        project.AddStored(copied.Changes, "Open Puck Peak Overtime");
+        foreach (var warning in copied.Warnings)
+            _services.Log.Warning(warning);
+        _services.Notify($"Opened Puck Peak Overtime: {copied.Files:N0} files ({copied.Bytes / 1048576.0:N0} MB)."
+            + (copied.Warnings.Count > 0 ? " " + string.Join(" ", copied.Warnings) : ""));
+        return true;
     }
 
     private void OnMenuOpen(object sender, RoutedEventArgs e)

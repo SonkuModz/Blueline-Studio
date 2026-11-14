@@ -56,10 +56,19 @@ public static class OverlayBuilder
         Directory.CreateDirectory(outputFolder);
         foreach (var stale in Directory.GetFiles(outputFolder, "patch_*_99_*.big"))
             File.Delete(stale);
-        if (inxp.Count > 0)
-            results.Add(WriteArchive(project, vfs, inxp, Path.Combine(outputFolder, $"patch_inxp_99_{project.Slug}.big"), progress, cancel));
-        if (game.Count > 0)
-            results.Add(WriteArchive(project, vfs, game, Path.Combine(outputFolder, $"patch_game_99_{project.Slug}.big"), progress, cancel));
+        // The game hangs or crashes when one archive holds two or more databases (seen in game), so each .db gets its own.
+        foreach (var (family, changes) in new[] { ("inxp", inxp), ("game", game) })
+        {
+            var databases = changes.Where(c => IsDatabase(c.Path)).ToList();
+            var rest = changes.Where(c => !IsDatabase(c.Path)).ToList();
+            if (rest.Count > 0)
+                results.Add(WriteArchive(project, vfs, rest, Path.Combine(outputFolder, $"patch_{family}_99_{project.Slug}.big"), progress, cancel));
+            for (var i = 0; i < databases.Count; i++)
+            {
+                var name = rest.Count == 0 && i == 0 ? $"patch_{family}_99_{project.Slug}.big" : $"patch_{family}_99_{project.Slug}_db{i + 1}.big";
+                results.Add(WriteArchive(project, vfs, [databases[i]], Path.Combine(outputFolder, name), progress, cancel));
+            }
+        }
 
         return new BuildResult(results, warnings, clock.Elapsed);
     }
@@ -98,6 +107,8 @@ public static class OverlayBuilder
         var hash = Convert.ToHexStringLower(SHA256.HashData(stream));
         return new BuiltArchive(destination, name, changes.Count, new FileInfo(destination).Length, hash);
     }
+
+    private static bool IsDatabase(string path) => path.EndsWith(".db", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The bytes as stored: wrapped only if the original was, since readers differ per path.</summary>
     private static byte[] Stored(ModProject project, VirtualFileSystem vfs, ProjectChange change)

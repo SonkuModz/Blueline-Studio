@@ -80,6 +80,8 @@
         <StackPanel x:Name="ButtonRow" Orientation="Horizontal" Margin="0,16,0,0">
           <Button x:Name="OpenButton" Content="Open project" Padding="16,7" Margin="0,0,8,0" Click="OnOpenProject" />
           <Button Content="New project" Padding="16,7" Margin="0,0,8,0" Click="OnNewProject" />
+          <Button x:Name="PuckPeakButton" Content="Open Puck Peak Overtime" Padding="16,7" Margin="0,0,8,0" Click="OnPuckPeak" Visibility="Collapsed"
+                  ToolTip="Make a project from the Puck Peak Overtime mod beside the game, so it can be edited and rebuilt here" />
           <Button Content="Just browse the game" Style="{StaticResource Quiet}" Padding="12,7" Click="OnBrowse" />
         </StackPanel>
       </StackPanel>

@@ -9,7 +9,14 @@ using Blueline.Formats.Models;
 namespace Blueline.App.Controls;
 
 /// <summary>Geometry prepared off the UI thread; frozen meshes can cross threads.</summary>
-public sealed record PreparedModel(Model3DGroup Scene, Point3D Center, double Radius, bool Truncated);
+public sealed record PreparedModel(Model3DGroup Scene, Point3D Center, double Radius, bool Truncated)
+{
+    /// <summary>The meshes of each part given to <see cref="ModelViewport.Prepare(IReadOnlyList{ModelPart}, ISet{string})"/>, in order.</summary>
+    public IReadOnlyList<PreparedPart> Parts { get; init; } = [];
+}
+
+/// <summary>One part's frozen meshes, their bounds, and the material they were prepared with.</summary>
+public sealed record PreparedPart(IReadOnlyList<MeshGeometry3D> Meshes, Rect3D Bounds, Material Material);
 
 /// <summary>A model to draw, and the picture to wrap on it. Without one it is shaded grey. Texture must be frozen.</summary>
 public sealed record ModelPart(McdFile Model, BitmapSource? Texture);
@@ -21,7 +28,11 @@ public partial class ModelViewport : UserControl
     private Point _last;
     private double _yaw = 0.7, _pitch = 0.35, _distance = 10;
     private Point3D _target;
+    private Point3D _center;
     private double _radius = 1;
+    private Point _pressedAt;
+    private readonly List<(List<GeometryModel3D> Models, Rect3D Bounds)> _parts = [];
+    private readonly Dictionary<GeometryModel3D, int> _partOf = [];
 
     public ModelViewport()
     {
@@ -50,11 +61,14 @@ public partial class ModelViewport : UserControl
         var (min, max) = (new Point3D(double.MaxValue, double.MaxValue, double.MaxValue), new Point3D(double.MinValue, double.MinValue, double.MinValue));
         var used = 0;
         var truncated = false;
+        var prepared = new List<PreparedPart>(parts.Count);
 
         foreach (var part in parts)
         {
             var model = part.Model;
             Material material = part.Texture == null ? grey : Wrapped(part.Texture);
+            var meshes = new List<MeshGeometry3D>();
+            var bounds = Rect3D.Empty;
             foreach (var shape in model.Shapes)
             {
                 if (hidden?.Contains(shape.Name) == true)
@@ -91,23 +105,26 @@ public partial class ModelViewport : UserControl
                         mesh.TextureCoordinates.Add(new Point(t.X, t.Y));
                 }
                 mesh.Freeze();
+                meshes.Add(mesh);
+                bounds.Union(mesh.Bounds);
 
                 var shown = mesh.TextureCoordinates.Count > 0 ? material : grey;
                 var geometry = new GeometryModel3D(mesh, shown) { BackMaterial = shown };
                 geometry.Freeze();
                 scene.Children.Add(geometry);
             }
+            prepared.Add(new PreparedPart(meshes, bounds, material));
         }
         scene.Freeze();
 
         if (scene.Children.Count == 0)
-            return new PreparedModel(scene, new Point3D(), 1, truncated);
+            return new PreparedModel(scene, new Point3D(), 1, truncated) { Parts = prepared };
         var center = new Point3D((min.X + max.X) / 2, (min.Y + max.Y) / 2, (min.Z + max.Z) / 2);
-        return new PreparedModel(scene, center, Math.Max((max - min).Length / 2, 1e-3), truncated);
+        return new PreparedModel(scene, center, Math.Max((max - min).Length / 2, 1e-3), truncated) { Parts = prepared };
     }
 
     /// <summary>A brush that takes a mesh's UVs as they are, rather than stretching the picture over their range.</summary>
-    private static Material Wrapped(BitmapSource texture)
+    public static Material Wrapped(BitmapSource texture)
     {
         var brush = new ImageBrush(texture)
         {
@@ -119,6 +136,90 @@ public partial class ModelViewport : UserControl
         var material = new DiffuseMaterial(brush);
         material.Freeze();
         return material;
+    }
+
+    /// <summary>
+    /// Shows a model whose parts can be given new textures afterwards (<see cref="SetTexture"/>) and picked with the mouse
+    /// (<see cref="Picked"/>). The meshes stay shared and frozen; only the materials change.
+    /// </summary>
+    public void ShowEditable(PreparedModel prepared, bool keepView = false, double closeness = 3.2)
+    {
+        var scene = new Model3DGroup();
+        _parts.Clear();
+        _partOf.Clear();
+        for (var i = 0; i < prepared.Parts.Count; i++)
+        {
+            var models = new List<GeometryModel3D>();
+            foreach (var mesh in prepared.Parts[i].Meshes)
+            {
+                var geometry = new GeometryModel3D(mesh, prepared.Parts[i].Material) { BackMaterial = prepared.Parts[i].Material };
+                scene.Children.Add(geometry);
+                models.Add(geometry);
+                _partOf[geometry] = i;
+            }
+            _parts.Add((models, prepared.Parts[i].Bounds));
+        }
+        ShowScene(prepared with { Scene = scene }, keepView, closeness);
+    }
+
+    /// <summary>Wraps a new picture on one part of a model shown with <see cref="ShowEditable"/>. Null greys it.</summary>
+    public void SetTexture(int part, BitmapSource? texture)
+    {
+        if (part < 0 || part >= _parts.Count)
+            return;
+        Material material = texture == null ? new DiffuseMaterial(new SolidColorBrush(Color.FromRgb(0xB8, 0xC2, 0xD2))) : Wrapped(texture);
+        foreach (var geometry in _parts[part].Models)
+            if (geometry.Geometry is MeshGeometry3D { TextureCoordinates.Count: > 0 } || texture == null)
+                geometry.Material = geometry.BackMaterial = material;
+    }
+
+    /// <summary>A part's bounds, for pointing the camera at it.</summary>
+    public Rect3D PartBounds(int part) => part >= 0 && part < _parts.Count ? _parts[part].Bounds : Rect3D.Empty;
+
+    /// <summary>A click (not a drag) on a part of an editable model: the part and the texture coordinate under the mouse.</summary>
+    public event Action<int, Point>? Picked;
+
+    /// <summary>Points the camera at a box, keeping its angle unless one is given.</summary>
+    public void FocusOn(Rect3D bounds, double closeness = 2.4, double? yaw = null, double? pitch = null)
+    {
+        if (bounds.IsEmpty)
+            return;
+        _target = new Point3D(bounds.X + bounds.SizeX / 2, bounds.Y + bounds.SizeY / 2, bounds.Z + bounds.SizeZ / 2);
+        var radius = Math.Max(new Vector3D(bounds.SizeX, bounds.SizeY, bounds.SizeZ).Length / 2, _radius * 0.05);
+        _distance = radius * closeness;
+        _yaw = yaw ?? _yaw;
+        _pitch = pitch ?? _pitch;
+        UpdateCamera();
+    }
+
+    /// <summary>Back to the whole model, from the front or another angle.</summary>
+    public void ResetView(double yaw, double pitch, double closeness)
+    {
+        _target = _center;
+        _distance = _radius * closeness;
+        (_yaw, _pitch) = (yaw, pitch);
+        UpdateCamera();
+    }
+
+    /// <summary>Picks at a point of the view, as a click there would. Returns false when nothing editable is under it.</summary>
+    public bool PickAt(Point point)
+    {
+        (int Part, Point Uv)? hit = null;
+        VisualTreeHelper.HitTest(View, null, result =>
+        {
+            if (result is RayMeshGeometry3DHitTestResult mesh && mesh.ModelHit is GeometryModel3D model && _partOf.TryGetValue(model, out var part)
+                && mesh.MeshHit.TextureCoordinates is { Count: > 0 } uvs)
+            {
+                var uv = (Vector)uvs[mesh.VertexIndex1] * mesh.VertexWeight1 + (Vector)uvs[mesh.VertexIndex2] * mesh.VertexWeight2
+                         + (Vector)uvs[mesh.VertexIndex3] * mesh.VertexWeight3;
+                hit = (part, (Point)uv);
+            }
+            return HitTestResultBehavior.Stop;
+        }, new PointHitTestParameters(point));
+        if (hit is not { } found)
+            return false;
+        Picked?.Invoke(found.Part, found.Uv);
+        return true;
     }
 
     /// <summary>Turns the camera, in radians around the model and above it.</summary>
@@ -133,6 +234,13 @@ public partial class ModelViewport : UserControl
     /// <param name="closeness">How far away the camera starts, in model radii. Less is closer.</param>
     public void Show(PreparedModel prepared, bool keepView = false, double closeness = 3.2)
     {
+        _parts.Clear();
+        _partOf.Clear();
+        ShowScene(prepared, keepView, closeness);
+    }
+
+    private void ShowScene(PreparedModel prepared, bool keepView, double closeness)
+    {
         Holder.Content = prepared.Scene;
         if (keepView)
         {
@@ -140,7 +248,7 @@ public partial class ModelViewport : UserControl
             Hint.Visibility = Visibility.Visible;
             return;
         }
-        _target = prepared.Center;
+        _target = _center = prepared.Center;
         _radius = prepared.Radius;
         _distance = _radius * closeness;
         Camera.NearPlaneDistance = _radius / 100;
@@ -160,11 +268,17 @@ public partial class ModelViewport : UserControl
 
     private void OnMouseDown(object sender, MouseButtonEventArgs e)
     {
-        _last = e.GetPosition(Surface);
+        _last = _pressedAt = e.GetPosition(Surface);
         Surface.CaptureMouse();
     }
 
-    private void OnMouseUp(object sender, MouseButtonEventArgs e) => Surface.ReleaseMouseCapture();
+    private void OnMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        Surface.ReleaseMouseCapture();
+        var at = e.GetPosition(Surface);
+        if (e.ChangedButton == MouseButton.Left && _parts.Count > 0 && (at - _pressedAt).Length < 4)
+            PickAt(e.GetPosition(View));
+    }
 
     private void OnMouseMove(object sender, MouseEventArgs e)
     {

@@ -30,6 +30,7 @@ const string Usage = """
     blueline team-list <game> [league]           List teams: league, art id, abbreviation, name, file name, assets, arena
     blueline team-assets <game> <team>           List everything filed under a team
     blueline team-logos <project> <game> <team> <image>   Put one PNG or DDS into all of a team's square logos
+    blueline puckpeak <game> <project>          Make a project from the Puck Peak Overtime mod beside the game (overtime-patch.json)
     blueline gear <game> <team> [<project> edit ...]   Show or change a team's glove and helmet colours per kit.
         Edits: gloves:Home=RRGGBB (main colour of the row that kit reads), gloves:Home.z7=RRGGBB (one zone),
         own:helmet:Away (give the kit its own row), row:900=RRGGBB or row:900.z7=RRGGBB (by the row's index field)
@@ -290,6 +291,27 @@ int Run(string[] a)
                     Console.WriteLine($"{item.Outcome,-9} {item.Path}  {item.Detail}");
                 Console.WriteLine($"{result.Imported} imported, {result.Skipped} skipped, {result.Failed} failed");
                 return result.Failed > 0 ? 2 : 0;
+            }
+        case "puckpeak" when a.Length == 3:
+            {
+                var install = GameInstall.Open(a[1]);
+                var mod = PuckPeakMod.Find(install) ?? throw new InvalidOperationException($"No {PuckPeakMod.ManifestName} next to {install.Root}.");
+                var project = File.Exists(Path.Combine(a[2], "project.json")) ? ModProject.Open(a[2]) : ModProject.Create(a[2], "Puck Peak Overtime");
+                Console.WriteLine($"Puck Peak Overtime, applied {mod.Applied}: {mod.FileCount:N0} files in {mod.Entries.Count} archives");
+                var last = DateTime.MinValue;
+                var result = mod.Copy(project, new Progress<(string Stage, int Done, int Total)>(p =>
+                {
+                    if ((DateTime.Now - last).TotalSeconds < 5 && p.Done != p.Total)
+                        return;
+                    last = DateTime.Now;
+                    Console.WriteLine($"  {p.Done:N0} of {p.Total:N0}");
+                }));
+                project.AddStored(result.Changes, "Open Puck Peak Overtime");
+                project.Save();
+                Console.WriteLine($"{result.Files:N0} files, {result.Bytes / 1048576.0:N0} MB, saved to {project.Folder}");
+                foreach (var warning in result.Warnings)
+                    Console.WriteLine("Note: " + warning);
+                return 0;
             }
         case "gear" when a.Length == 3 || a.Length >= 5:
             {

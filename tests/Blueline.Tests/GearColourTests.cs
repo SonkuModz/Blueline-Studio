@@ -141,4 +141,38 @@ public sealed class GearColourTests
         var tinted = GearPreview.Tint(detail, null, [mask], zones);
         CollectionAssert.AreEqual(new byte[] { 0x00, 0x72, 0xCE, 255 }, tinted.Pixels);
     }
+
+    [TestMethod]
+    public void ZoneMapFindsTheCcmLogoAsZoneSeven()
+    {
+        if (_vfs == null)
+            Assert.Inconclusive("NHL 19 is not next to the repository and BLUELINE_GAME is not set.");
+        // Seen in game: zone 7 of the CCM 4rollpro glove is its logo, a small patch of the texture.
+        var model = new GearModel(GearPart.Gloves, GearPreview.DefaultGloves);
+        var prefix = model.Pieces[0].Prefix;
+        var masks = Enumerable.Range(1, 4).Select(n => Read(GearModel.MaskMap(prefix, n)) is { } data
+            && Formats.Textures.GameTexture.TryOpen(data) is { Blocker: null } texture ? texture.DecodeMip(0) : null).ToList();
+        Assert.IsNotNull(masks[0]);
+        var map = GearZoneMap.Build(masks);
+        Assert.IsTrue(map.Coverage.TryGetValue(7, out var logo) && logo is > 0 and < 0.1, $"zone 7 covers {logo:P1}");
+        Assert.IsTrue(map.Coverage.ContainsKey(1), "the glove has a main zone");
+    }
+
+    [TestMethod]
+    public void HighlightKeepsTheZoneAndDimsTheRest()
+    {
+        // Two pixels: the left in zone 1 (red of tm1), the right in zone 2 (green). Zone 2 is highlighted.
+        var detail = new Formats.Textures.RgbaImage(2, 1, new byte[8]);
+        var mask = new Formats.Textures.RgbaImage(2, 1, [255, 0, 0, 255, 0, 255, 0, 255]);
+        var zones = Enumerable.Repeat(0xC00000, GearColours.ZoneCount).ToArray();
+        zones[1] = 0x00C000;
+        var map = GearZoneMap.Build([mask]);
+        Assert.AreEqual(1, map.ZoneAt(0.25, 0.5));
+        Assert.AreEqual(2, map.ZoneAt(0.75, 0.5));
+        Assert.AreEqual(2, map.ZoneAt(1.75, -0.5), "coordinates wrap");
+        var tinted = GearPreview.Tint(detail, null, [mask], zones, highlight: 2, map: map, outline: 0xFFD54A);
+        Assert.IsTrue(tinted.Pixels[0] < 0x80 && tinted.Pixels[0] == tinted.Pixels[1], "zone 1 goes to a dim grey");
+        // A one-pixel zone is all edge, so it takes the outline colour.
+        CollectionAssert.AreEqual(new byte[] { 0xFF, 0xD5, 0x4A, 255 }, tinted.Pixels[4..8]);
+    }
 }

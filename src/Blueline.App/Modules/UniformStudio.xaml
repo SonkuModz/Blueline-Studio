@@ -1,0 +1,67 @@
+<UserControl x:Class="Blueline.App.Modules.UniformStudio"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:Blueline.App.Controls">
+  <Grid>
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="*" MinWidth="360" />
+      <ColumnDefinition Width="10" />
+      <ColumnDefinition Width="390" />
+    </Grid.ColumnDefinitions>
+
+    <!-- The player -->
+    <DockPanel>
+      <DockPanel DockPanel.Dock="Top" Margin="0,0,0,2">
+        <Button x:Name="BackButton" DockPanel.Dock="Right" Style="{StaticResource Quiet}" Content="Back to the files" FontSize="12" Padding="8,2" Click="OnBack"
+                VerticalAlignment="Top" ToolTip="Back to the team's pictures" />
+        <TextBlock Style="{StaticResource Section}" Text="KIT" Width="44" VerticalAlignment="Top" Margin="2,6,0,0" />
+        <WrapPanel>
+          <WrapPanel x:Name="KitChips" VerticalAlignment="Center" />
+          <TextBlock x:Name="OlderLabel" Style="{StaticResource Dim}" Text="Older" VerticalAlignment="Center" Margin="8,0,6,4" />
+          <ComboBox x:Name="OlderBox" Width="170" FontSize="12" Margin="0,0,0,4" DisplayMemberPath="Label" SelectionChanged="OnOlderKit"
+                    ToolTip="Reebok and Nineties kits. They have no linked glove and helmet rows" />
+        </WrapPanel>
+      </DockPanel>
+      <DockPanel DockPanel.Dock="Top" Margin="0,0,0,2">
+        <TextBlock Style="{StaticResource Section}" Text="VIEW" Width="44" VerticalAlignment="Top" Margin="2,6,0,0" />
+        <WrapPanel>
+          <ToggleButton x:Name="FullChip" Style="{StaticResource Chip}" Content="Front" Margin="0,0,4,4" Click="OnViewChip" Tag="front" />
+          <ToggleButton x:Name="BackChip" Style="{StaticResource Chip}" Content="Back" Margin="0,0,4,4" Click="OnViewChip" Tag="back" />
+          <ToggleButton x:Name="GlovesChip" Style="{StaticResource Chip}" Content="Gloves" Margin="0,0,4,4" Click="OnViewChip" Tag="gloves" />
+          <ToggleButton x:Name="HelmetChip" Style="{StaticResource Chip}" Content="Helmet" Margin="0,0,0,4" Click="OnViewChip" Tag="helmet" />
+        </WrapPanel>
+      </DockPanel>
+      <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+        <TextBlock Style="{StaticResource Section}" Text="WEAR" Width="44" VerticalAlignment="Top" Margin="2,6,0,0" />
+        <WrapPanel>
+          <TextBlock Style="{StaticResource Dim}" Text="Jersey" VerticalAlignment="Center" Margin="0,0,4,4" />
+          <ComboBox x:Name="SizeBox" Width="74" FontSize="12" Margin="0,0,8,4" SelectionChanged="OnOption" ToolTip="The game's large and small jersey meshes" />
+          <TextBlock Style="{StaticResource Dim}" Text="Tuck" VerticalAlignment="Center" Margin="0,0,4,4" />
+          <ComboBox x:Name="TuckBox" Width="66" FontSize="12" Margin="0,0,8,4" SelectionChanged="OnOption" />
+          <TextBlock Style="{StaticResource Dim}" Text="Pants" VerticalAlignment="Center" Margin="0,0,4,4" />
+          <ComboBox x:Name="PantsBox" Width="66" FontSize="12" Margin="0,0,16,4" SelectionChanged="OnOption" />
+          <TextBlock Style="{StaticResource Dim}" Text="Gloves" VerticalAlignment="Center" Margin="0,0,4,4" />
+          <ComboBox x:Name="GloveBox" Width="140" FontSize="12" Margin="0,0,8,4" SelectionChanged="OnOption"
+                    ToolTip="Which glove model to draw. Its colours come from the kit's glove row" />
+          <TextBlock Style="{StaticResource Dim}" Text="Helmet" VerticalAlignment="Center" Margin="0,0,4,4" />
+          <ComboBox x:Name="HelmetBox" Width="140" FontSize="12" Margin="0,0,0,4" SelectionChanged="OnOption"
+                    ToolTip="Which helmet model to draw. Its colours come from the kit's helmet row" />
+        </WrapPanel>
+      </DockPanel>
+      <TextBlock x:Name="Note" DockPanel.Dock="Bottom" Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="2,6,0,0" />
+      <Grid>
+        <controls:ModelViewport x:Name="Viewport" />
+        <Border x:Name="ZoneBadge" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="10" Padding="10,5" CornerRadius="6"
+                Background="{DynamicResource RaisedBrush}" BorderBrush="{DynamicResource AccentBrush}" BorderThickness="1" Visibility="Collapsed" IsHitTestVisible="False">
+          <StackPanel Orientation="Horizontal">
+            <Border x:Name="ZoneSwatch" Width="14" Height="14" CornerRadius="3" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" Margin="0,0,8,0" />
+            <TextBlock x:Name="ZoneText" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" />
+          </StackPanel>
+        </Border>
+      </Grid>
+    </DockPanel>
+
+    <!-- Glove and helmet colours -->
+    <ContentControl x:Name="EditorHost" Grid.Column="2" />
+  </Grid>
+</UserControl>

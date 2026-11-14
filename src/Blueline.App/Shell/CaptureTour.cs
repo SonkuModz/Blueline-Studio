@@ -260,6 +260,33 @@ public sealed class CaptureTour(MainWindow window, bool pressPlay = false)
                 await UniformSettled();
             });
 
+            await Step("05x6-studio-glove-zone", async () =>
+            {
+                // Zone 7 of the CCM glove is its logo (seen in game): choosing it should light it up and bring the camera to it.
+                teams.GearPanel.SelectZone(Core.Teams.GearPart.Gloves, 7);
+                await UniformSettled();
+                Note($"Selected zone: {teams.GearPanel.SelectedZone}");
+            });
+
+            await Step("05x7-studio-helmet-pick", async () =>
+            {
+                // A click on the helmet selects the zone under the mouse.
+                teams.GearPanel.SelectZone(Core.Teams.GearPart.Gloves, 0);
+                teams.Studio.ShowView("helmet");
+                await UniformSettled();
+                var view = teams.UniformView;
+                var picked = view.PickAt(new System.Windows.Point(view.ActualWidth / 2, view.ActualHeight * 0.3));
+                await UniformSettled();
+                Note($"Picked the helmet shell: {picked}, selected zone: {teams.GearPanel.SelectedZone}");
+            });
+
+            await Step("05x8-studio-front", async () =>
+            {
+                teams.GearPanel.SelectZone(Core.Teams.GearPart.Helmet, 0);
+                teams.Studio.ShowView("front");
+                await UniformSettled();
+            });
+
             if (services.Workspace.Vfs.Install.ModsFolder != null)
                 await Step("05n-uniform-3d-modded", async () =>
                 {

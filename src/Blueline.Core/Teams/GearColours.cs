@@ -91,25 +91,28 @@ public sealed class GearColours
     }
 
     /// <summary>
-    /// The jersey-table kit a set of uniform sheets is. Adidas home and away are variants 0 and 1. The alternates ("two",
-    /// "three") are taken as the team's other adidas variants in order, which is a guess from naming. Older brands have no
-    /// known gear era, so they give null.
+    /// The jersey-table kit a set of uniform sheets is. Adidas home and away are variants 0 and 1. An alternate's word
+    /// ("two", "three", ...) is taken as its jersey index, which is a guess from naming (Toronto has sheets home to five and
+    /// jersey indexes 0 to 5). Older brands have no known gear era, so they give null.
     /// </summary>
     public GearKit? KitFor(TeamInfo team, UniformKit kit)
     {
         if (kit.Brand != "adidas")
             return null;
         var kits = KitsOf(team);
-        var alternates = kits.Where(k => k.Variant >= 2).ToList();
+        var number = Array.IndexOf(SheetNumbers, kit.Kit);
         return kit.Kit switch
         {
             "home" => kits.FirstOrDefault(k => k.Variant == 0),
             "away" => kits.FirstOrDefault(k => k.Variant == 1),
-            "two" => alternates.ElementAtOrDefault(0),
-            "three" => alternates.ElementAtOrDefault(1),
-            _ => null,
+            _ => number >= 2 ? kits.FirstOrDefault(k => k.JerseyIndex == number) : null,
         };
     }
+
+    private static readonly string[] SheetNumbers = ["home", "away", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+
+    /// <summary>True when the link from a sheet set to its kit is a guess (anything but home and away).</summary>
+    public static bool IsGuessedLink(UniformKit kit) => kit.Kit is not ("home" or "away");
 
     public IReadOnlyList<GearRow> RowsOf(int gearTeam)
     {

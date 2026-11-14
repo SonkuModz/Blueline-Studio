@@ -16,6 +16,15 @@ public partial class NewProjectDialog : Window
     }
 
     public string ProjectName => NameBox.Text.Trim();
+
+    public string InitialName
+    {
+        set
+        {
+            NameBox.Text = value;
+            NameBox.SelectAll();
+        }
+    }
     public string ProjectFolder => FolderBox.Text.Trim();
 
     private void OnNameChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)

@@ -31,6 +31,7 @@ public partial class StartScreen : UserControl
     public event Action? OpenProjectRequested;
     public event Action? NewProjectRequested;
     public event Action? BrowseRequested;
+    public event Action? PuckPeakRequested;
     public event Action? ChooseGameRequested;
 
     /// <summary>True while the screen is up.</summary>
@@ -112,6 +113,7 @@ public partial class StartScreen : UserControl
                 ? $"  ·  mods folder: {vfs.Install.ArchivesAddedByMods.Count} added, {vfs.Install.ArchivesReplacedByMods.Count} replaced"
                 : "");
             ChooseGame.Visibility = Visibility.Collapsed;
+            PuckPeakButton.Visibility = PuckPeakMod.Find(vfs.Install) != null ? Visibility.Visible : Visibility.Collapsed;
         }
         else
         {
@@ -267,6 +269,8 @@ public partial class StartScreen : UserControl
     private void OnNewProject(object sender, RoutedEventArgs e) => NewProjectRequested?.Invoke();
 
     private void OnBrowse(object sender, RoutedEventArgs e) => BrowseRequested?.Invoke();
+
+    private void OnPuckPeak(object sender, RoutedEventArgs e) => PuckPeakRequested?.Invoke();
 
     private void OnChooseGame(object sender, RoutedEventArgs e) => ChooseGameRequested?.Invoke();
 

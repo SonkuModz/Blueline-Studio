@@ -26,8 +26,17 @@ public sealed class GearColoursPanel : UserControl
     private string? _loadedBlob;
     private bool _dirty;
     private bool _showing;
+    private readonly Dictionary<GearPart, IReadOnlyDictionary<int, double>> _modelZones = [];
+    private readonly Dictionary<(GearPart Part, int Zone), Border> _zoneRows = [];
+    private (GearPart Part, int Zone)? _selected;
 
     public event Action? CloseRequested;
+
+    /// <summary>A zone to show on the model: hovered (for a moment) or selected. Zone 0 shows none.</summary>
+    public event Action<GearPart, int>? ZoneHighlighted;
+
+    /// <summary>Raised when the kit being edited changes, so the 3D view can follow.</summary>
+    public event Action<GearKit?>? KitChanged;
 
     /// <summary>Raised after any change to the working copy, so the 3D preview can follow unsaved edits.</summary>
     public event Action? Edited;
@@ -38,9 +47,13 @@ public sealed class GearColoursPanel : UserControl
         _save.Style = (Style)FindResource("Primary");
         _save.Click += (_, _) => SaveToProject();
         _discard.Click += (_, _) => { _dirty = false; Load(); };
-        _kitBox.SelectionChanged += (_, _) => ShowKit();
+        _kitBox.SelectionChanged += (_, _) =>
+        {
+            ShowKit();
+            KitChanged?.Invoke(_kitBox.SelectedItem as GearKit);
+        };
 
-        var close = new Button { Content = "Back to the file", Style = (Style)FindResource("Quiet"), FontSize = 12, Padding = new Thickness(6, 0, 6, 0) };
+        var close = _close = new Button { Content = "Back to the file", Style = (Style)FindResource("Quiet"), FontSize = 12, Padding = new Thickness(6, 0, 6, 0) };
         close.Click += (_, _) => CloseRequested?.Invoke();
         var title = new DockPanel { Margin = new Thickness(2, 0, 0, 4) };
         DockPanel.SetDock(close, Dock.Right);
@@ -91,7 +104,65 @@ public sealed class GearColoursPanel : UserControl
         });
     }
 
+    private Button _close = null!;
+
+    /// <summary>Whether the panel shows its own way back (it does not when it sits in the uniform studio).</summary>
+    public bool CloseButtonVisible
+    {
+        get => _close.Visibility == Visibility.Visible;
+        set => _close.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>The kit to open on when the table is (re)read, so the editor follows the kit on screen.</summary>
+    public Func<GearColours, GearKit?>? WantedKit { get; set; }
+
     public bool IsDirty => _dirty;
+    public GearKit? Kit => _kitBox.SelectedItem as GearKit;
+    public (GearPart Part, int Zone)? SelectedZone => _selected;
+
+    /// <summary>Shows a kit, as choosing it in the list would. Unknown kits are ignored.</summary>
+    public void SelectKit(GearKit? kit)
+    {
+        if (kit != null && _kitBox.Items.Cast<GearKit>().FirstOrDefault(k => k.Variant == kit.Variant) is { } match && !Equals(match, _kitBox.SelectedItem))
+            _kitBox.SelectedItem = match;
+    }
+
+    /// <summary>The zones the model on screen really has for a part, with how much of it each covers. They are listed first.</summary>
+    public void SetModelZones(GearPart part, IReadOnlyDictionary<int, double>? zones)
+    {
+        if (zones == null)
+            _modelZones.Remove(part);
+        else
+            _modelZones[part] = zones;
+        if (_showing)
+            ShowKit();
+    }
+
+    /// <summary>The colours of the row the shown kit reads for a part, copied, so a preview can use them on another thread.</summary>
+    public int[]? ZonesFor(GearPart part) =>
+        _gear != null && _team != null && GearColours.GearTeamOf(_team) is { } gearTeam && Kit is { } kit
+            ? _gear.Resolve(gearTeam, kit, part).Row?.Zones.ToArray()
+            : null;
+
+    /// <summary>Selects a zone, as clicking its row would, and scrolls to it. Zone 0 clears the selection.</summary>
+    public void SelectZone(GearPart part, int zone)
+    {
+        _selected = zone > 0 ? (part, zone) : null;
+        RestyleZones();
+        if (zone > 0 && _zoneRows.TryGetValue((part, zone), out var row))
+            row.BringIntoView();
+        ZoneHighlighted?.Invoke(part, zone);
+    }
+
+    private void RestyleZones()
+    {
+        foreach (var ((part, zone), row) in _zoneRows)
+        {
+            var on = _selected == (part, zone);
+            row.Background = on ? (Brush)FindResource("SelectBrush") : Brushes.Transparent;
+            row.BorderBrush = on ? (Brush)FindResource("AccentBrush") : Brushes.Transparent;
+        }
+    }
     public TeamInfo? Team => _team;
     public GearColours? Gear => _gear;
     public ComboBox KitBox => _kitBox;
@@ -156,7 +227,8 @@ public sealed class GearColoursPanel : UserControl
         var kits = _gear.KitsOf(_team);
         var previous = (_kitBox.SelectedItem as GearKit)?.Variant;
         _kitBox.ItemsSource = kits;
-        _kitBox.SelectedItem = kits.FirstOrDefault(k => k.Variant == previous) ?? kits.FirstOrDefault();
+        var wanted = WantedKit?.Invoke(_gear)?.Variant;
+        _kitBox.SelectedItem = kits.FirstOrDefault(k => k.Variant == wanted) ?? kits.FirstOrDefault(k => k.Variant == previous) ?? kits.FirstOrDefault();
         if (kits.Count == 0)
             ShowKit();
     }
@@ -164,6 +236,7 @@ public sealed class GearColoursPanel : UserControl
     private void ShowKit()
     {
         _body.Children.Clear();
+        _zoneRows.Clear();
         if (_gear == null || _team == null || GearColours.GearTeamOf(_team) is not { } gearTeam)
             return;
         if (_kitBox.SelectedItem is GearKit kit)
@@ -181,7 +254,7 @@ public sealed class GearColoursPanel : UserControl
         {
             var label = new TextBlock { Text = $"{row.Part}, era {row.Era}, variant {row.Variant} (row {row.Index})", FontSize = 12, Margin = new Thickness(0, 8, 0, 2) };
             list.Children.Add(label);
-            list.Children.Add(RowEditor(row));
+            list.Children.Add(RowEditor(row, null));
         }
         _body.Children.Add(new Expander { Header = $"Older rows  {older.Count}", Content = list, Margin = new Thickness(0, 12, 0, 0) });
     }
@@ -225,11 +298,15 @@ public sealed class GearColoursPanel : UserControl
             }
         }
         if (resolution.Row != null)
-            _body.Children.Add(RowEditor(resolution.Row));
+            _body.Children.Add(RowEditor(resolution.Row, part));
+        RestyleZones();
     }
 
-    /// <summary>The main colour, with the team's colours one click away, and every zone under it.</summary>
-    private FrameworkElement RowEditor(GearRow row)
+    /// <summary>
+    /// The main colour, with the team's colours one click away, and every zone under it. For the shown kit, the zones the
+    /// model on screen has come first, and each can be selected to find it on the model.
+    /// </summary>
+    private FrameworkElement RowEditor(GearRow row, GearPart? part)
     {
         var panel = new StackPanel { Margin = new Thickness(0, 6, 0, 0) };
         var main = ColourField("Main", row.Main, rgb => _gear!.SetMain(row, rgb));
@@ -247,22 +324,80 @@ public sealed class GearColoursPanel : UserControl
         var accents = row.Zones.Select((c, i) => (Colour: c, Zone: i + 1)).Where(z => z.Colour != row.Main).ToList();
         panel.Children.Add(Dim(accents.Count == 0 ? "One colour in every zone." : "Accents: " + string.Join(", ", accents.Select(a => $"zone {a.Zone} #{GearColours.Hex(a.Colour)}")) + "."));
 
-        var zones = new WrapPanel();
+        var onModel = part is { } p && _modelZones.TryGetValue(p, out var present) ? present : null;
+        if (onModel != null)
+        {
+            panel.Children.Add(new TextBlock { Text = "ZONES ON THIS MODEL", Style = (Style)FindResource("Section"), Margin = new Thickness(0, 10, 0, 2) });
+            panel.Children.Add(Dim("Click a zone to find it on the model, or click the model to find its zone. What each zone is (logo, cuff, trim) changes between models."));
+            foreach (var (zone, share) in onModel.OrderBy(z => z.Key))
+                if (zone <= GearColours.ZoneCount)
+                    panel.Children.Add(ZoneRow(row, part!.Value, zone, share));
+        }
+        var rest = new WrapPanel();
         for (var z = 1; z <= GearColours.ZoneCount; z++)
         {
+            if (onModel?.ContainsKey(z) == true)
+                continue;
             var zone = z;
             var field = ColourField($"Zone {zone}", row.Zones[zone - 1], rgb => _gear!.SetZone(row, zone, rgb));
             field.Width = 150;
             field.Margin = new Thickness(0, 0, 6, 4);
-            zones.Children.Add(field);
+            rest.Children.Add(field);
         }
         panel.Children.Add(new Expander
         {
-            Header = "All zones",
-            Content = new StackPanel { Children = { Dim("Which zone is which part (logo, cuff, trim) changes from one glove model to the next."), zones } },
-            Margin = new Thickness(0, 4, 0, 0),
+            Header = onModel == null ? "All zones" : $"Zones not on this model  {rest.Children.Count}",
+            Content = new StackPanel { Children = { Dim(onModel == null ? "Which zone is which part (logo, cuff, trim) changes from one glove model to the next." : "Other glove or helmet models may use these."), rest } },
+            Margin = new Thickness(0, 6, 0, 0),
         });
         return panel;
+    }
+
+    /// <summary>One zone the model has: hover shows it on the model, a click selects it there.</summary>
+    private Border ZoneRow(GearRow row, GearPart part, int zone, double share)
+    {
+        var field = ColourField($"Zone {zone}", row.Zones[zone - 1], rgb => _gear!.SetZone(row, zone, rgb));
+        field.Margin = new Thickness(0);
+        field.Children.Add(new TextBlock { Text = share >= 0.01 ? $"{share:P0}" : "<1%", Style = (Style)FindResource("Dim"), FontSize = 11, Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, ToolTip = "How much of the texture this zone covers" });
+        var border = new Border
+        {
+            Child = field,
+            Padding = new Thickness(4, 3, 4, 3),
+            Margin = new Thickness(0, 1, 0, 1),
+            CornerRadius = new CornerRadius(4),
+            BorderThickness = new Thickness(1),
+            BorderBrush = Brushes.Transparent,
+            Background = Brushes.Transparent,
+            Cursor = Cursors.Hand,
+            ToolTip = $"Zone {zone}: click to find it on the model",
+        };
+        border.MouseEnter += (_, _) =>
+        {
+            if (_selected != (part, zone))
+                border.Background = (Brush)FindResource("HoverBrush");
+            ZoneHighlighted?.Invoke(part, zone);
+        };
+        border.MouseLeave += (_, _) =>
+        {
+            RestyleZones();
+            ZoneHighlighted?.Invoke(_selected?.Part ?? part, _selected?.Zone ?? 0);
+        };
+        border.MouseLeftButtonUp += (_, e) =>
+        {
+            if (e.OriginalSource is DependencyObject source && FindParent<TextBox>(source) != null)
+                return;
+            SelectZone(part, _selected == (part, zone) ? 0 : zone);
+        };
+        _zoneRows[(part, zone)] = border;
+        return border;
+    }
+
+    private static T? FindParent<T>(DependencyObject child) where T : DependencyObject
+    {
+        for (var node = child; node != null; node = VisualTreeHelper.GetParent(node))
+            if (node is T found)
+                return found;
+        return null;
     }
 
     private StackPanel ColourField(string label, int rgb, Func<int, GearRow> write)
