@@ -56,6 +56,8 @@
                 <Button Content="New project" Style="{StaticResource PopupItem}" Click="OnMenuNew" />
                 <Button Content="Open project" Style="{StaticResource PopupItem}" Click="OnMenuOpen" />
                 <Button x:Name="MenuPuckPeak" Content="Open Puck Peak Overtime as a project" Style="{StaticResource PopupItem}" Click="OnMenuPuckPeak" />
+                <Button x:Name="MenuMerge" Content="Merge another project into this one" Style="{StaticResource PopupItem}" Click="OnMenuMerge"
+                        ToolTip="Adds another Blueline project, a .big or a folder of .big files. You review every file first" />
                 <Button x:Name="MenuFolder" Content="Show project folder" Style="{StaticResource PopupItem}" Click="OnMenuFolder" />
                 <Button x:Name="MenuClose" Content="Close project" Style="{StaticResource PopupItem}" Click="OnMenuClose" />
                 <Rectangle Height="1" Fill="{DynamicResource LineBrush}" Margin="0,4,0,4" />

@@ -97,8 +97,12 @@ public sealed class ModsFolderTests
         Assert.IsGreaterThan(1000, checkedFiles);
 
         // A renamed club keeps its files, and it is the art id that says so.
-        var catalog = TeamCatalog.Load(p => modded.Find(p) is { } f ? modded.ReadContent(f) : null, modded.Files.Select(f => f.Path).ToList());
+        var catalog = TeamCatalog.Load(p => modded.Find(p) is { } f ? modded.ReadContent(f) : null, modded.Files.Select(f => f.Path).ToList(), modded.ReadStock);
         Assert.AreEqual("arizona", catalog.Teams.First(t => t.ArtId == 22 && t.LeagueId == 0).Slug);
+        // Renamed AHL sides keep the stock side's files, so their names must not pick another team's: Hamilton Hammers
+        // is not the OHL Hamilton Bulldogs, and Calgary Wranglers is not the Flames.
+        foreach (var (art, slug) in new[] { (141, "binghamton"), (132, "bridgeport"), (161, "stockton"), (152, "san_antonio") })
+            Assert.AreEqual(slug, catalog.Teams.First(t => t.ArtId == art && t.LeagueId == 1).Slug, $"art {art}");
         foreach (var kraken in catalog.Teams.Where(t => t.ArtId == 10499 && t.LeagueId == 0))
             Assert.AreEqual("pre_order", kraken.Slug);
         Assert.IsTrue(catalog.ArtOf(catalog.Teams.First(t => t.ArtId == 27 && t.LeagueId == 0)).Any(a => a.Category == TeamArtCategory.CenterIce));

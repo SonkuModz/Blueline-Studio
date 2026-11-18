@@ -112,9 +112,17 @@ public static class TexturePipeline
 
         var gnf = GnfTexture.Parse(original);
         var (image, wasResized) = Fit(source, gnf.Info.Width, gnf.Info.Height);
-        var blocks = EncodeChain(image, gnf.Info.MipCount, gnf.Info.Codec, gnf.Info.IsSigned, quality);
-        return new TextureImportResult(GnfTexture.Rebuild(gnf, blocks), wasResized, clock.Elapsed);
+        var codec = TargetCodec(gnf.Info.Codec);
+        var blocks = EncodeChain(image, gnf.Info.MipCount, codec, gnf.Info.IsSigned, quality);
+        return new TextureImportResult(GnfTexture.Rebuild(gnf, blocks, codec), wasResized, clock.Elapsed);
     }
+
+    /// <summary>
+    /// The format a replacement is written in. BC3 becomes BC7: the same 16 bytes per block, so the file keeps its size
+    /// and tiling, but BC3 holds only two colours per 4x4 block and turns thin lines in logos pink and green. The game
+    /// reads BC7 everywhere (its own team logos and portraits use it; some mods re-save them as BC3).
+    /// </summary>
+    public static TextureCodec TargetCodec(TextureCodec stored) => stored == TextureCodec.Bc3 ? TextureCodec.Bc7 : stored;
 
     private static (RgbaImage, bool) Fit(RgbaImage source, int width, int height) =>
         source.Width == width && source.Height == height ? (source, false) : (Resize(source, width, height), true);

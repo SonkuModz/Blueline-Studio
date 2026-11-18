@@ -129,13 +129,28 @@ public sealed class GnfTexture
     public int MipWidth(int mip) => Math.Max(1, Info.Width >> mip);
     public int MipHeight(int mip) => Math.Max(1, Info.Height >> mip);
 
+    /// <summary>The descriptor's data format number for a codec.</summary>
+    public static int DataFormatOf(TextureCodec codec) => codec switch
+    {
+        TextureCodec.Bc1 => 35, TextureCodec.Bc2 => 36, TextureCodec.Bc3 => 37, TextureCodec.Bc4 => 38,
+        TextureCodec.Bc5 => 39, TextureCodec.Bc6H => 40, TextureCodec.Bc7 => 41, TextureCodec.Rgba8 => 10,
+        _ => throw new NotSupportedException(codec.ToString()),
+    };
+
     /// <summary>
     /// A new GNF identical in header to <paramref name="template"/> with new pixels. Each entry in
-    /// <paramref name="mips"/> is one mip of compressed blocks in raster order.
+    /// <paramref name="mips"/> is one mip of compressed blocks in raster order. <paramref name="codec"/> changes
+    /// the stored format, only to one with the same block size so the tiling and file size stay the same.
     /// </summary>
-    public static byte[] Rebuild(GnfTexture template, IReadOnlyList<byte[]> mips)
+    public static byte[] Rebuild(GnfTexture template, IReadOnlyList<byte[]> mips, TextureCodec? codec = null)
     {
         var info = template.Info;
+        if (codec is { } wanted && wanted != info.Codec)
+        {
+            if (GnmTiling.ElementBytes(wanted) != GnmTiling.ElementBytes(info.Codec) || GnmTiling.ElementSpan(wanted) != GnmTiling.ElementSpan(info.Codec))
+                throw new NotSupportedException($"{info.Codec} cannot be stored as {wanted}: the block sizes differ.");
+            info = info with { DataFormat = DataFormatOf(wanted) };
+        }
         if (info.Faces != 1)
             throw new NotSupportedException("Only single-face textures can be rebuilt.");
         if (mips.Count != info.MipCount)
@@ -144,6 +159,12 @@ public sealed class GnfTexture
         var pixels = GnmTiling.TotalBytes(info);
         var output = new byte[HeaderSize + pixels];
         template.File.AsSpan(0, HeaderSize).CopyTo(output);
+        if (info.DataFormat != template.Info.DataFormat)
+        {
+            var word = output.AsSpan(DescriptorOffset + 4);
+            var w1 = BinaryPrimitives.ReadUInt32LittleEndian(word);
+            BinaryPrimitives.WriteUInt32LittleEndian(word, (w1 & ~(0x3Fu << 20)) | ((uint)info.DataFormat << 20));
+        }
         for (var mip = 0; mip < mips.Count; mip++)
         {
             var destination = output.AsSpan((int)(HeaderSize + GnmTiling.SurfaceOffset(info, mip, 0)));

@@ -67,8 +67,14 @@
                       ToolTip="Imports a folder of images, matching them by game path or by a file name only one texture has" />
               <Button x:Name="RevertTeamButton" Content="Revert team" Margin="0,0,6,4" Click="OnRevertTeam"
                       ToolTip="Puts back every texture of this team that this project changed" />
+              <ToggleButton x:Name="DetailsButton" Style="{StaticResource Chip}" Content="Team details" Margin="0,0,6,4" Click="OnTeamDetails"
+                            ToolTip="Names, score clock and other colours, arena, songs, goalie masks and everything else the game database holds for this team" />
               <ToggleButton x:Name="GearButton" Style="{StaticResource Chip}" Content="Uniform studio" Margin="0,0,6,4" Click="OnGearColours"
                             ToolTip="The team's kits on the game's meshes, with each kit's glove and helmet colours beside them" />
+              <ToggleButton x:Name="FullIceButton" Style="{StaticResource Chip}" Content="Full ice" Margin="0,0,6,4" Click="OnFullIce"
+                            ToolTip="The team's whole rink for the full-ice model: from TheFaceoff.net, any picture, or a plain rink with the team's logo" />
+              <ToggleButton x:Name="TruColorButton" Style="{StaticResource Chip}" Content="League colours" Margin="0,0,6,4" Click="OnTruColor"
+                            ToolTip="A whole league's team colours from TruColor (trucolor.net), previewed next to the current ones before anything is written" />
             </WrapPanel>
           </StackPanel>
         </Grid>
@@ -182,6 +188,15 @@
 
     <!-- The uniform studio: the kit in 3D with the glove and helmet colours beside it -->
     <ContentControl x:Name="StudioHost" Grid.ColumnSpan="3" Visibility="Collapsed" />
+
+    <!-- Team details: everything the database holds for the team -->
+    <ContentControl x:Name="DetailsHost" Grid.ColumnSpan="3" Visibility="Collapsed" />
+
+    <!-- Full ice: the team's whole rink for the full-ice rink model -->
+    <ContentControl x:Name="FullIceHost" Grid.ColumnSpan="3" Visibility="Collapsed" />
+
+    <!-- League colours: a league's team colours from TruColor -->
+    <ContentControl x:Name="TruColorHost" Grid.ColumnSpan="3" Visibility="Collapsed" />
       </Grid>
     </DockPanel>
   </Grid>

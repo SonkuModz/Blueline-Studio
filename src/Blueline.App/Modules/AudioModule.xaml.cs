@@ -9,7 +9,7 @@ using Microsoft.Win32;
 
 namespace Blueline.App.Modules;
 
-/// <summary>Sound banks: list samples by walking the block chain, then decode and replace them through sx.exe.</summary>
+/// <summary>Sound banks: list samples by walking the block chain, then decode and replace them: EA Opus through FFmpeg, the rest through sx.exe.</summary>
 public partial class AudioModule : UserControl, IEditorModule
 {
     private readonly AppServices _services;
@@ -24,7 +24,7 @@ public partial class AudioModule : UserControl, IEditorModule
         InitializeComponent();
         Browser.SetScope(r => r.Category == AssetCategory.Audio);
         Browser.SelectionChanged += LoadBank;
-        DropTarget.Attach(SamplesCard, f => File.Exists(f) && Path.GetExtension(f).Equals(".wav", StringComparison.OrdinalIgnoreCase),
+        DropTarget.Attach(SamplesCard, f => File.Exists(f) && AudioFiles.Contains(Path.GetExtension(f)),
             files => _ = ReplaceFrom(files[0]), SamplesCard);
         _player.MediaEnded += (_, _) => Stop.IsEnabled = false;
         services.Workspace.Changed += () => Dispatcher.BeginInvoke(() =>
@@ -34,6 +34,8 @@ public partial class AudioModule : UserControl, IEditorModule
         });
         UpdateButtons();
     }
+
+    private static readonly HashSet<string> AudioFiles = new([".wav", ".mp3", ".ogg", ".flac", ".m4a", ".aac", ".opus"], StringComparer.OrdinalIgnoreCase);
 
     public string Title => "Audio";
     public FrameworkElement View => this;
@@ -55,15 +57,26 @@ public partial class AudioModule : UserControl, IEditorModule
 
     private SxTool? Tool => _services.Settings.SxPath is { Length: > 0 } path && File.Exists(path) ? new SxTool(path) : null;
 
+    private OpusTool? Opus => _services.Ffmpeg is { } ffmpeg ? new OpusTool(ffmpeg) : null;
+
+    /// <summary>EA Opus goes through FFmpeg, which needs no sx.exe; other codecs need sx.exe.</summary>
+    private bool CanDecode(SoundSample sample) => OpusTool.CanHandle(sample) ? Opus != null || Tool != null : Tool != null;
+
+    private bool CanEncode(SoundSample sample) => OpusTool.CanHandle(sample) ? Opus != null || Tool != null : Tool != null && SxTool.FlagFor(sample) != null;
+
+    private Task Decode(SoundSample sample, byte[] bytes, string wav, CancellationToken cancel) =>
+        OpusTool.CanHandle(sample) && Opus is { } opus ? opus.DecodeAsync(bytes, wav, cancel) : Tool!.DecodeAsync(bytes, wav, cancel);
+
     private void UpdateButtons()
     {
-        var has = Tool != null;
         var sample = Samples.SelectedItem as SoundSample;
-        Play.IsEnabled = has && sample != null;
-        Export.IsEnabled = has && sample != null;
-        Replace.IsEnabled = has && sample != null && SxTool.FlagFor(sample) != null;
+        Play.IsEnabled = sample != null && CanDecode(sample);
+        Export.IsEnabled = sample != null && CanDecode(sample);
+        Replace.IsEnabled = sample != null && CanEncode(sample);
         RevertBank.IsEnabled = _bankPath != null && _services.Workspace.IsEdited(_bankPath);
-        ToolNote.Text = has ? "" : "Listening, export and replace need EA's sx.exe. Choose it in Settings.";
+        ToolNote.Text = sample == null || CanEncode(sample) ? ""
+            : OpusTool.CanHandle(sample) ? "EA Opus samples need FFmpeg (a full build). Choose it in Settings."
+            : $"{sample.CodecName} samples need EA's sx.exe. Choose it in Settings.";
     }
 
     private void OnSampleSelected(object sender, SelectionChangedEventArgs e) => UpdateButtons();
@@ -130,13 +143,13 @@ public partial class AudioModule : UserControl, IEditorModule
 
     private void OnPlay(object sender, RoutedEventArgs e)
     {
-        if (Samples.SelectedItem is not SoundSample sample || Tool is not { } tool)
+        if (Samples.SelectedItem is not SoundSample sample || !CanDecode(sample))
             return;
         _ = _services.Jobs.RunAsync($"Decoding sample {sample.Index}", async context =>
         {
             var target = Path.Combine(Path.GetTempPath(), "Blueline", $"preview-{Guid.NewGuid():N}.wav");
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            await tool.DecodeAsync(ReadSample(sample), target, context.Cancel);
+            await Decode(sample, ReadSample(sample), target, context.Cancel);
             return target;
         }, wav =>
         {
@@ -166,7 +179,7 @@ public partial class AudioModule : UserControl, IEditorModule
     private void OnExport(object sender, RoutedEventArgs e)
     {
         var selected = Samples.SelectedItems.Cast<SoundSample>().OrderBy(s => s.Index).ToList();
-        if (selected.Count == 0 || Tool == null)
+        if (selected.Count == 0 || !selected.All(CanDecode))
             return;
         var stem = Path.GetFileNameWithoutExtension(_bankPath);
 
@@ -184,7 +197,6 @@ public partial class AudioModule : UserControl, IEditorModule
 
     public Task<bool> ExportSamples(IReadOnlyList<SoundSample> samples, string folder, string? exactName)
     {
-        var tool = Tool!;
         var stem = Path.GetFileNameWithoutExtension(_bankPath);
         return _services.Jobs.RunAsync($"Exporting {samples.Count} sample{(samples.Count == 1 ? "" : "s")}", async context =>
         {
@@ -193,7 +205,7 @@ public partial class AudioModule : UserControl, IEditorModule
                 context.Cancel.ThrowIfCancellationRequested();
                 context.Progress($"Decoding sample {samples[i].Index}", i, samples.Count);
                 var target = exactName ?? Path.Combine(folder, $"{stem}_{samples[i].Index:D4}.wav");
-                await tool.DecodeAsync(ReadSample(samples[i]), target, context.Cancel);
+                await Decode(samples[i], ReadSample(samples[i]), target, context.Cancel);
             }
             return samples.Count;
         }, count => _services.Notify($"Exported {count} sample{(count == 1 ? "" : "s")} to {folder}."));
@@ -201,21 +213,26 @@ public partial class AudioModule : UserControl, IEditorModule
 
     private void OnReplace(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFileDialog { Title = "Choose a WAV", Filter = "WAV|*.wav" };
+        var dialog = new OpenFileDialog { Title = "Choose audio", Filter = "Audio|*.wav;*.mp3;*.ogg;*.flac;*.m4a;*.aac;*.opus|All files|*.*" };
         if (dialog.ShowDialog() == true)
             _ = ReplaceFrom(dialog.FileName);
     }
 
     public async Task ReplaceFrom(string wav)
     {
-        if (Samples.SelectedItem is not SoundSample sample || Tool is not { } tool || _bankPath == null)
+        if (Samples.SelectedItem is not SoundSample sample || _bankPath == null)
         {
-            _services.ReportError("Nothing to replace", "Select a sample first. Audio replacement also needs sx.exe, set in Settings.");
+            _services.ReportError("Nothing to replace", "Select a sample first.");
             return;
         }
-        if (SxTool.FlagFor(sample) is not { } flag)
+        if (OpusTool.CanHandle(sample) && Opus is { } opus)
         {
-            _services.ReportError("This codec cannot be encoded", $"{sample.CodecName} has no encoder through sx.exe here.");
+            await ReplaceOpus(sample, opus, wav);
+            return;
+        }
+        if (Tool is not { } tool || SxTool.FlagFor(sample) is not { } flag)
+        {
+            _services.ReportError("This codec cannot be encoded", $"{sample.CodecName} has no encoder here. EA Opus needs FFmpeg; the others need sx.exe, set in Settings.");
             return;
         }
         if (_services.RequireProject() is not { } project)
@@ -234,6 +251,28 @@ public partial class AudioModule : UserControl, IEditorModule
         {
             project.Set(path, result.Item1, $"Sample {sample.Index} from {Path.GetFileName(wav)}");
             _services.Notify($"Replaced sample {sample.Index} at quality {result.fitted.Quality}, {result.fitted.Sample.Length:N0} of {sample.Length:N0} bytes.");
+            LoadBank();
+        });
+    }
+
+    private async Task ReplaceOpus(SoundSample sample, OpusTool opus, string audio)
+    {
+        if (_services.RequireProject() is not { } project)
+            return;
+        var workspace = _services.Workspace;
+        var path = _bankPath!;
+        await _services.Jobs.RunAsync($"Replacing sample {sample.Index}", async context =>
+        {
+            var bank = workspace.ReadCurrent(path)!;
+            var donor = bank.AsSpan((int)sample.Offset, sample.Length).ToArray();
+            var fitted = await opus.EncodeToFitAsync(audio, donor, sample.Length, null, new Status(context), context.Cancel)
+                ?? throw new InvalidOperationException($"Even at the lowest bitrate this audio is larger than the slot of {sample.Length:N0} bytes. Use a shorter clip.");
+            context.Status("Updating the bank");
+            return (SoundBank.ReplaceSample(bank, sample, fitted.Sample), fitted);
+        }, result =>
+        {
+            project.Set(path, result.Item1, $"Sample {sample.Index} from {Path.GetFileName(audio)}");
+            _services.Notify($"Replaced sample {sample.Index}: {result.fitted.Seconds:F1} s at {result.fitted.Kilobits} kbit/s, {result.fitted.Sample.Length:N0} of {sample.Length:N0} bytes.");
             LoadBank();
         });
     }

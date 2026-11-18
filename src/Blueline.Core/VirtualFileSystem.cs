@@ -96,6 +96,10 @@ public sealed class VirtualFileSystem : IDisposable
     public IReadOnlyList<GameFile> Layers(string path) =>
         _layers.TryGetValue(path, out var stack) ? stack : Array.Empty<GameFile>();
 
+    /// <summary>A path's content without the mods folder: the last layer from the install itself, or null when only mods have it.</summary>
+    public byte[]? ReadStock(string path) =>
+        Layers(path).LastOrDefault(l => !l.IsFromModsFolder) is { } file ? ReadContent(file) : null;
+
     /// <summary>The file's real content, with any chunkzip wrapper removed.</summary>
     public byte[] ReadContent(GameFile file) =>
         file.Entry != null ? file.Archive!.ReadContent(file.Entry) : File.ReadAllBytes(file.LooseFile!);

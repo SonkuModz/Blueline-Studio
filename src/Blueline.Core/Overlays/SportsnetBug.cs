@@ -63,11 +63,13 @@ public static class SportsnetBug
         LayoutWidget W(string name, LayoutWidget? under = null) =>
             (under != null ? Walk(under).FirstOrDefault(w => w.Name == name) : document.Find(name)) ?? throw new InvalidOperationException("Missing " + name);
 
+        // Seen in game 2026-11-15: scaleX and scaleY on the scoreClock group did nothing (the bug drew at the full 1.953 times
+        // size), so the scale goes on the root widget, and scoreClock's place is divided by it to land at the same screen point.
         var clock = W("scoreClock");
-        Set(clock, "x", ScreenX);
-        Set(clock, "y", ScreenY);
-        Set(clock, "scaleX", Scale);
-        Set(clock, "scaleY", Scale);
+        Set(document.Root, "scaleX", Scale);
+        Set(document.Root, "scaleY", Scale);
+        Set(clock, "x", Math.Round(ScreenX / Scale, 1));
+        Set(clock, "y", Math.Round(ScreenY / Scale, 1));
 
         // The chrome of the stock clock is not part of this look. Hidden parts stay hidden because the game's code only moves them.
         foreach (var name in new[] { "capLeft", "capRight", "bgGradLeft", "bgGradRight" })
@@ -121,8 +123,10 @@ public static class SportsnetBug
         Set(panel, "height", TeamRow);
         var tint = Part("tint");
         Set(tint, "height", TeamRow);
-        foreach (var name in new[] { "blackAdditive", "goalAnimation" })
-            Set(Part(name), "height", TeamRow);
+        Set(Part("blackAdditive"), "height", TeamRow);
+
+        // The stock goal flash on the scoring team's panel is not part of this look.
+        Hide(Part("goalAnimation"));
 
         // The stock clock puts each team's logo in its panel. This bug shows no logo at rest.
         foreach (var name in new[] { "logoMask", "scoreDivider", "gradient", "highlightTop2" })
@@ -204,27 +208,54 @@ public static class SportsnetBug
         Set(goal, "y", 4);
         Set(goal, "width", GoalWidth);
         Set(goal, "height", Height);
-        Set(Part("tint"), "width", GoalWidth);
-        Set(Part("tint"), "height", Height);
-        Set(Part("highlight"), "width", GoalWidth);
-        Set(Part("highlight"), "height", Height / 2);
-        foreach (var name in new[] { "angles0", "angles1", "angles2" })
+
+        // The stock bar's decorations are not part of this look. The code still animates some of them, which is harmless hidden.
+        foreach (var name in new[] { "angles0", "angles1", "angles2", "bottomGlow", "highlightTop", "highlightTop2", "glow", "glowSmall", "text", "highlight" })
+            Hide(Part(name));
+
+        // Four full height bars under each other, bottom first: blue, the white band, the blue behind it, the team colour. The
+        // goal script grows them from the left (SportsnetGoal).
+        var tint = Part("tint");
+        Set(tint, "width", GoalWidth);
+        Set(tint, "height", Height);
+        var children = (JsonArray)goal.Node["children"]!;
+        var bars = new[]
         {
-            var group = Part(name);
-            foreach (var angle in group.Children)
-                Set(angle, "height", Height);
+            Make(Rectangle, SportsnetGoal.Blue, ("x", 0), ("y", 0), ("width", GoalWidth), ("height", Height), ("fillColor", "0x015AB5")),
+            Make(Rectangle, SportsnetGoal.White, ("x", 0), ("y", 0), ("width", 0), ("height", Height), ("fillColor", "0xEFECF1")),
+            Make(Rectangle, SportsnetGoal.Blue2, ("x", 0), ("y", 0), ("width", 0), ("height", Height), ("fillColor", "0x015AB5")),
+        };
+        var at = children.IndexOf(tint.Node);
+        for (var i = bars.Length - 1; i >= 0; i--)
+            children.Insert(at, bars[i]);
+
+        // The team logo, centred where the broadcast has it; the script scales it about its centre.
+        var logoMask = Part("logoMask");
+        Set(logoMask, "width", GoalWidth);
+        Set(logoMask, "height", Height);
+        var holder = Part("logoHolder");
+        Set(holder, "x", SportsnetGoal.LogoX);
+        Set(holder, "y", SportsnetGoal.LogoY);
+        Set(holder, "alpha", 0);
+
+        // The thin pale streak the bar keeps from f58, over the team colour and under the letters.
+        var (sx, sy, sw, sh) = SportsnetGoal.StreakBox;
+        Append(goal, Make(Rectangle, SportsnetGoal.Streak, ("x", sx), ("y", sy), ("width", sw), ("height", sh), ("fillColor", "0xFFFFFF"), ("alpha", 0)));
+
+        // GOAL as four letters, so they can fade in one at a time.
+        var letters = "GOAL";
+        for (var i = 0; i < 4; i++)
+        {
+            var letter = Make(Label, SportsnetGoal.Letters[i], ("x", SportsnetGoal.LetterLeft(SportsnetGoal.LetterCentres[i])), ("y", SportsnetGoal.LetterY),
+                ("width", SportsnetGoal.LetterWidth), ("height", Height), ("alpha", 0), ("text", letters[i].ToString()), ("fontFace", "NBCSN_Frank Bold"),
+                ("fontSize", SportsnetGoal.LetterSize), ("fontColor", "0xFFFFFF"), ("textAlignH", "CENTER"));
+            Append(goal, letter);
         }
-        Set(Part("logoMask"), "width", GoalWidth);
-        Set(Part("logoMask"), "height", Height);
 
-        // This bug's goal bar has no logo in it.
-        Hide(Part("logoHolder"));
-
-        var text = Part("text");
-        Set(text, "fontFace", "NBCSN_Frank Bold");
-        Set(text, "fontSize", 150);
-        Set(text, "y", 32);
-        Set(text, "width", 520);
+        // The bar covers the whole bug, so it draws over everything else in the contents, the shots row included.
+        var contents = (JsonArray)goal.Parent!.Node["children"]!;
+        contents.Remove(goal.Node);
+        contents.Add(goal.Node);
     }
 
     // JSON helpers

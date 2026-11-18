@@ -173,7 +173,15 @@ public sealed class RealGameTests
             var rebuilt = TexturePipeline.Import(original, before, CompressionQuality.Balanced);
 
             Assert.HasCount(original.Length, rebuilt.Gnf, $"{file.Path} changed size");
-            CollectionAssert.AreEqual(original[..0x100], rebuilt.Gnf[..0x100], $"{file.Path} header changed");
+            var expected = original[..0x100];
+            if (info.Codec == TextureCodec.Bc3)
+            {
+                // BC3 is written as BC7: only the data format bits change.
+                Assert.AreEqual(TextureCodec.Bc7, GnfTexture.ReadInfo(rebuilt.Gnf).Codec, file.Path);
+                expected[0x16] = (byte)((expected[0x16] & 0x0F) | ((41 & 0x0F) << 4));
+                expected[0x17] = (byte)((expected[0x17] & 0xFC) | (41 >> 4));
+            }
+            CollectionAssert.AreEqual(expected, rebuilt.Gnf[..0x100], $"{file.Path} header changed");
 
             var after = GameTexture.TryOpen(rebuilt.Gnf)!.DecodeMip(0);
             var psnr = Psnr(before.Pixels, after.Pixels);
@@ -182,6 +190,37 @@ public sealed class RealGameTests
             Assert.IsGreaterThan(30.0, psnr, $"{file.Path} ({info.Codec})");
         }
         Assert.IsGreaterThanOrEqualTo(3, seen.Count, "Too few codecs exercised.");
+    }
+
+    [TestMethod]
+    public void Bc3Target_IsWrittenAsBc7_AndKeepsThinLines()
+    {
+        // Puck Peak re-saves team logos as BC3, which turned thin yellow and white lines pink and green in game.
+        var file = Game.Find("nhl/data/kettle/rendering/characters/player/trapper_left_brians_rayemery_tm1.gnf");
+        Assert.IsNotNull(file);
+        var original = Game.ReadContent(file);
+        var info = GnfTexture.ReadInfo(original);
+        Assert.AreEqual(TextureCodec.Bc3, info.Codec);
+
+        // Blue with one-pixel yellow and white stripes, like a logo outline.
+        var pixels = new byte[info.Width * info.Height * 4];
+        for (var y = 0; y < info.Height; y++)
+            for (var x = 0; x < info.Width; x++)
+            {
+                byte[] colour = (x % 6) switch { 2 => [255, 190, 20], 3 => [250, 250, 250], _ => [20, 90, 200] };
+                colour.CopyTo(pixels, (y * info.Width + x) * 4);
+                pixels[(y * info.Width + x) * 4 + 3] = 255;
+            }
+        var image = new RgbaImage(info.Width, info.Height, pixels);
+
+        var rebuilt = TexturePipeline.Import(original, image, CompressionQuality.Balanced).Gnf;
+        Assert.HasCount(original.Length, rebuilt);
+        var after = GnfTexture.Parse(rebuilt);
+        Assert.AreEqual(TextureCodec.Bc7, after.Info.Codec);
+        Assert.AreEqual(info with { DataFormat = 41 }, after.Info);
+        var psnr = Psnr(pixels, GameTexture.TryOpen(rebuilt)!.DecodeMip(0).Pixels);
+        TestContext.WriteLine($"BC7 PSNR {psnr:F1} dB");
+        Assert.IsGreaterThan(35.0, psnr);
     }
 
     private static double Psnr(byte[] a, byte[] b)
@@ -355,5 +394,37 @@ public sealed class RealGameTests
 
         Assert.IsEmpty(ModInstaller.Uninstall(project, install));
         CollectionAssert.AreEqual(new[] { "boot.big" }, Directory.GetFiles(databigs).Select(Path.GetFileName).ToArray());
+    }
+
+    [TestMethod]
+    public void Overlaps_FindsAnotherInstalledModWithTheSameFiles()
+    {
+        var sandbox = Path.Combine(_temp, "overlap-sandbox");
+        var databigs = Directory.CreateDirectory(Path.Combine(sandbox, "databigs")).FullName;
+        File.WriteAllBytes(Path.Combine(sandbox, "eboot.bin"), [1]);
+        File.WriteAllBytes(Path.Combine(databigs, "boot.big"), [2]);
+        var install = GameInstall.Open(sandbox);
+
+        var boards = ModProject.Create(Path.Combine(_temp, "overlap-boards"), "Boards");
+        boards.Set("nhl/blueline/board.txt", [1], "Board");
+        boards.Set("nhl/blueline/other.txt", [2], "Other");
+        ModInstaller.Install(boards, install, OverlayBuilder.Build(boards, Game, boards.BuildFolder));
+
+        var combined = ModProject.Create(Path.Combine(_temp, "overlap-combined"), "Combined");
+        combined.Set("nhl/blueline/board.txt", [1], "Merged board");
+        combined.Set("nhl/blueline/mine.txt", [3], "Mine");
+        var build = OverlayBuilder.Build(combined, Game, combined.BuildFolder);
+
+        var overlap = ModInstaller.Overlaps(combined, install, build).Single();
+        Assert.AreEqual("patch_inxp_99_boards.big", overlap.FileName);
+        Assert.AreEqual(1, overlap.Shared);
+        Assert.AreEqual("nhl/blueline/board.txt", overlap.Examples[0]);
+        Assert.IsEmpty(ModInstaller.Overlaps(boards, install, OverlayBuilder.Build(boards, Game, boards.BuildFolder)), "A mod never overlaps itself.");
+
+        ModInstaller.RemoveOther(install, overlap.FileName);
+        ModInstaller.Install(combined, install, build);
+        Assert.IsEmpty(ModInstaller.Overlaps(combined, install, build));
+        Assert.IsFalse(ModInstaller.IsInstalled(boards, install));
+        Assert.ThrowsExactly<InstallBlockedException>(() => ModInstaller.RemoveOther(install, "boot.big"));
     }
 }

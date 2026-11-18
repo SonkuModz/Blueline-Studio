@@ -105,6 +105,33 @@ public sealed class GearColoursPanel : UserControl
     }
 
     private Button _close = null!;
+    private string? _meta;
+    private GearColours? _roster;
+    private DateTime _rosterStamp;
+
+    /// <summary>The gear table of the custom roster save (RosterCustom0), read again when the save changes (after a sync or a
+    /// save in game). Null with no emulator set, no roster save, or one that cannot be read.</summary>
+    private GearColours? RosterGear()
+    {
+        if (_meta == null || _services.Settings.EmulatorPath is not { Length: > 0 } exe || !File.Exists(exe))
+            return null;
+        try
+        {
+            if (RosterSync.CustomRosterFolder(new Core.Emulator.ShadInstall(exe).UserFolder) is not { } folder)
+                return _roster = null;
+            var stamp = File.GetLastWriteTimeUtc(Path.Combine(folder, "DATA"));
+            if (_roster != null && stamp == _rosterStamp)
+                return _roster;
+            var file = TdbFile.Parse((byte[])RosterSave.Read(folder).Database.Clone());
+            file.ApplyMeta(_meta);
+            (_roster, _rosterStamp) = (GearColours.Open(file), stamp);
+            return _roster;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException)
+        {
+            return _roster = null;
+        }
+    }
 
     /// <summary>Whether the panel shows its own way back (it does not when it sits in the uniform studio).</summary>
     public bool CloseButtonVisible
@@ -164,6 +191,9 @@ public sealed class GearColoursPanel : UserControl
         }
     }
     public TeamInfo? Team => _team;
+
+    /// <summary>The team's uniform sheets, so alternates without a jersey row can still be picked. Set before <see cref="SetTeam"/>.</summary>
+    public IReadOnlyList<UniformKit> Sheets { get; set; } = [];
     public GearColours? Gear => _gear;
     public ComboBox KitBox => _kitBox;
 
@@ -216,7 +246,9 @@ public sealed class GearColoursPanel : UserControl
             var file = TdbFile.Parse((byte[])workspace.ReadCurrent(TeamCatalog.DatabasePath)!.Clone());
             if (vfs.Find(TeamCatalog.MetaPath) is { } meta)
                 file.ApplyMeta(Encoding.UTF8.GetString(vfs.ReadContent(meta)));
+            _meta = vfs.Find(TeamCatalog.MetaPath) is { } metaFile ? Encoding.UTF8.GetString(vfs.ReadContent(metaFile)) : null;
             _gear = GearColours.Open(file);
+            _gear.UseSheets(_team, Sheets);
             _loadedBlob = CurrentBlob();
         }
         catch (Exception e) when (e is InvalidDataException or IOException)
@@ -276,6 +308,16 @@ public sealed class GearColoursPanel : UserControl
         if (resolution.Link == GearLink.Fallback && others.Count > 0)
             text.Foreground = (Brush)FindResource("WarningBrush");
         _body.Children.Add(text);
+
+        if (RosterGear() is { } roster && _gear.RowOnlyInRoster(roster, gearTeam, kit, part) is { } theirs)
+        {
+            var hidden = Dim($"The custom roster save has its own row for this kit (row {theirs.Index}, main #{GearColours.Hex(theirs.Main)}). "
+                + "With that roster loaded, the game shows that row, not the one here, and \"Copy edits to roster save\" leaves it alone. "
+                + "Give this kit its own row below, then copy, to change it in game.");
+            hidden.Foreground = (Brush)FindResource("WarningBrush");
+            hidden.Margin = new Thickness(0, 4, 0, 0);
+            _body.Children.Add(hidden);
+        }
 
         if (resolution.Link != GearLink.Own)
         {

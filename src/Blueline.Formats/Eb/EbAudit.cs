@@ -1,8 +1,12 @@
 namespace Blueline.Formats.Eb;
 
-public sealed record EbAuditResult(string Archive, int Entries, int UniqueBlocks, long GapBytes, IReadOnlyList<string> Problems)
+public sealed record EbAuditResult(string Archive, int Entries, int UniqueBlocks, long GapBytes, IReadOnlyList<string> Problems, string? GameProblem = null)
 {
+    /// <summary>The archive reads correctly.</summary>
     public bool Clean => Problems.Count == 0;
+
+    /// <summary>The game can also load every file in it. Older Blueline archives read fine but fail here.</summary>
+    public bool GameReady => Clean && GameProblem == null;
 }
 
 /// <summary>
@@ -28,6 +32,15 @@ public static class EbAudit
             Problem($"File length {archive.Length:N0} is not a multiple of 16.");
 
         var hashed = (archive.Flags & EbArchive.FlagHashedRows) != 0;
+        string? gameProblem = null;
+        if (hashed && archive.Entries.Count > 0)
+        {
+            var flags = archive.ReadFileFlags();
+            if (flags == null)
+                gameProblem = "No per-file table between the rows and the names. The game reads the names there instead, and files after the second do not load.";
+            else if (flags.Any(b => b != 0))
+                gameProblem = "The per-file table holds values other than zero, which no stock archive does.";
+        }
         ulong previous = 0;
         foreach (var entry in archive.Entries)
         {
@@ -53,6 +66,6 @@ public static class EbAudit
                 gaps += spans[i].Start - spans[i - 1].End;
         }
 
-        return new EbAuditResult(archive.Name, archive.Entries.Count, spans.Count, gaps, problems);
+        return new EbAuditResult(archive.Name, archive.Entries.Count, spans.Count, gaps, problems, gameProblem);
     }
 }

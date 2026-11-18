@@ -13,9 +13,15 @@ public sealed record GearRow(int Row, int Index, int Team, GearPart Part, int Er
     public bool IsFallback => Variant == 0;
 }
 
-/// <summary>One of a team's current (adidas) jerseys, from the jersey table.</summary>
+/// <summary>
+/// One of a team's current (adidas) kits: a jersey from the jersey table, or (JerseyIndex -1) a gear variant from 3 up that
+/// has rows of its own but no jersey row. Seen in game 2026-11-15: Buffalo has no adidas alternate in its jersey list, yet
+/// its Goathead alternate (the "two" sheets, added by Puck Peak) wore the gear variant 3 gloves.
+/// </summary>
 public sealed record GearKit(int JerseyIndex, int Variant)
 {
+    public bool FromGearRowsOnly => JerseyIndex < 0;
+
     /// <summary>The gear table's variant for this kit. Jersey 0 is Home and 1 is Away, but gear 1 is Home and 2 is Away;
     /// from 3 on they match. Jersey variant 2 has no gear number, since gear 2 is Away.</summary>
     public int? GearVariant => Variant switch { 0 => 1, 1 => 2, >= 3 => Variant, _ => null };
@@ -81,31 +87,56 @@ public sealed class GearColours
     /// <summary>The gear table's number for a team, or null where the link is not known (only NHL clubs are checked).</summary>
     public static int? GearTeamOf(TeamInfo team) => team.LeagueId == 0 ? team.Index + 1 : null;
 
-    public IReadOnlyList<GearKit> KitsOf(TeamInfo team)
+    private readonly Dictionary<int, IReadOnlyList<UniformKit>> _sheets = [];
+
+    /// <summary>
+    /// Tells the table which uniform sheets a team has, so an adidas alternate with no jersey row and no gear row yet (like
+    /// Buffalo's "two" once its only row was moved) still gets a kit to edit.
+    /// </summary>
+    public void UseSheets(TeamInfo team, IEnumerable<UniformKit> sheets) => _sheets[team.Index] = [.. sheets];
+
+    public IReadOnlyList<GearKit> KitsOf(TeamInfo team) => KitsOf(team, null);
+
+    private List<GearKit> KitsOf(TeamInfo team, UniformKit? alsoSheet)
     {
         var kits = new List<GearKit>();
         for (var r = 0; r < _jerseys.Count; r++)
             if (Number(_jerseys, r, _jerseyTeam) == team.Index && Number(_jerseys, r, _jerseyStyle) == 0)
                 kits.Add(new GearKit(Number(_jerseys, r, _jerseyIndex), Number(_jerseys, r, _jerseyVariant)));
-        return kits.OrderBy(k => k.Variant).ToList();
+        // Gear variants from 3 up with rows of their own are kits the game can wear even without a jersey row.
+        if (GearTeamOf(team) is { } gearTeam)
+            foreach (var variant in RowsOf(gearTeam).Where(r => r.IsCurrentEra && r.Variant >= 3).Select(r => r.Variant).Distinct().Order())
+                if (kits.All(k => k.GearVariant != variant))
+                    kits.Add(new GearKit(-1, variant));
+
+        // Adidas alternate sheets with no jersey row are matched in order to the kits that only have gear rows ("two" to
+        // the first). Where there are not enough of those, new gear numbers follow the highest one in use.
+        var sheets = _sheets.GetValueOrDefault(team.Index, []).Append(alsoSheet).OfType<UniformKit>();
+        var needed = sheets.Where(s => s.Brand == "adidas").Select(s => Array.IndexOf(SheetNumbers, s.Kit))
+            .Where(n => n >= 2 && kits.All(k => k.JerseyIndex != n)).DefaultIfEmpty(1).Max() - 1;
+        while (kits.Count(k => k.FromGearRowsOnly) < needed)
+            kits.Add(new GearKit(-1, Math.Max(3, kits.Select(k => k.GearVariant ?? k.Variant).DefaultIfEmpty(2).Max() + 1)));
+        return [.. kits.OrderBy(k => k.Variant)];
     }
 
     /// <summary>
     /// The jersey-table kit a set of uniform sheets is. Adidas home and away are variants 0 and 1. An alternate's word
     /// ("two", "three", ...) is taken as its jersey index, which is a guess from naming (Toronto has sheets home to five and
-    /// jersey indexes 0 to 5). Older brands have no known gear era, so they give null.
+    /// jersey indexes 0 to 5). When no jersey has that index, the alternates are matched in order to the kits that only
+    /// have gear rows ("two" to the first): Buffalo's "two" wore gear variant 3 in game. Older brands have no known gear
+    /// era, so they give null.
     /// </summary>
     public GearKit? KitFor(TeamInfo team, UniformKit kit)
     {
         if (kit.Brand != "adidas")
             return null;
-        var kits = KitsOf(team);
+        var kits = KitsOf(team, kit);
         var number = Array.IndexOf(SheetNumbers, kit.Kit);
         return kit.Kit switch
         {
             "home" => kits.FirstOrDefault(k => k.Variant == 0),
             "away" => kits.FirstOrDefault(k => k.Variant == 1),
-            _ => number >= 2 ? kits.FirstOrDefault(k => k.JerseyIndex == number) : null,
+            _ => number >= 2 ? kits.FirstOrDefault(k => k.JerseyIndex == number) ?? kits.Where(k => k.FromGearRowsOnly).ElementAtOrDefault(number - 2) : null,
         };
     }
 
@@ -134,6 +165,33 @@ public sealed class GearColours
         if (rows.FirstOrDefault(r => r.IsFallback) is { } fallback)
             return new GearResolution(kit, part, fallback, GearLink.Fallback);
         return new GearResolution(kit, part, null, GearLink.None);
+    }
+
+    /// <summary>
+    /// The roster save's own row for a kit that has none here. The game reads that row instead of this table's fallback, and
+    /// the roster sync leaves it alone (it only copies rows this table has), so edits here do not reach that kit in game until
+    /// it gets a row of its own. Seen in game 2026-11-15: Buffalo's Goathead kept the roster's royal blue gloves (row 142).
+    /// </summary>
+    public GearRow? RowOnlyInRoster(GearColours roster, int gearTeam, GearKit kit, GearPart part) =>
+        Resolve(gearTeam, kit, part).Link != GearLink.Own && roster.Resolve(gearTeam, kit, part) is { Link: GearLink.Own, Row: { } row }
+            ? row
+            : null;
+
+    /// <summary>The team's current-era fallback row for a part: what the game uses for any kit without a row of its own.</summary>
+    public GearRow? FallbackRow(int gearTeam, GearPart part) =>
+        RowsOf(gearTeam).FirstOrDefault(r => r.Part == part && r.IsCurrentEra && r.IsFallback);
+
+    /// <summary>
+    /// The colours to preview a part in for a set of uniform sheets: its kit's row when the sheets are linked to a kit, else,
+    /// for adidas sheets, the fallback row, which the game uses for any kit without a row of its own.
+    /// </summary>
+    public int[]? PreviewZones(TeamInfo team, UniformKit kit, GearPart part)
+    {
+        if (GearTeamOf(team) is not { } gearTeam)
+            return null;
+        var row = KitFor(team, kit) is { } linked ? Resolve(gearTeam, linked, part).Row
+            : kit.Brand == "adidas" ? FallbackRow(gearTeam, part) : null;
+        return row?.Zones.ToArray();
     }
 
     /// <summary>Every current kit that reads this row, so an edit can say what else it changes.</summary>

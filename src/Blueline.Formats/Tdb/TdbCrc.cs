@@ -21,9 +21,12 @@ public static class TdbCrc
         return table;
     }
 
-    public static uint Compute(ReadOnlySpan<byte> bytes)
+    public static uint Compute(ReadOnlySpan<byte> bytes) => Continue(0xFFFFFFFFu, bytes);
+
+    /// <summary>Feeds more bytes into a running CRC.</summary>
+    public static uint Continue(uint crc, ReadOnlySpan<byte> bytes)
     {
-        var c = 0xFFFFFFFFu;
+        var c = crc;
         foreach (var b in bytes)
             c = (c << 8) ^ Table[((c >> 24) ^ b) & 0xFF];
         return c;

@@ -106,6 +106,9 @@ public partial class TeamsModule : UserControl, IEditorModule
     private IReadOnlyList<UniformKit> _kits = [];
     private readonly GearColoursPanel _gearPanel;
     private readonly UniformStudio _studio;
+    private readonly TeamDetailsPanel _detailsPanel;
+    private readonly FullIcePanel _fullIcePanel;
+    private readonly TruColorPanel _truColorPanel;
 
     public TeamsModule(AppServices services)
     {
@@ -125,6 +128,17 @@ public partial class TeamsModule : UserControl, IEditorModule
             }
         };
         StudioHost.Content = _studio;
+        _detailsPanel = new TeamDetailsPanel(services);
+        _detailsPanel.CloseRequested += () => ShowDetails(false);
+        _detailsPanel.Saved += ReloadTeams;
+        DetailsHost.Content = _detailsPanel;
+        _fullIcePanel = new FullIcePanel(services);
+        _fullIcePanel.CloseRequested += () => ShowFullIce(false);
+        FullIceHost.Content = _fullIcePanel;
+        _truColorPanel = new TruColorPanel(services);
+        _truColorPanel.CloseRequested += () => ShowTruColor(false);
+        _truColorPanel.Saved += ReloadTeams;
+        TruColorHost.Content = _truColorPanel;
         ShowNoSelection();
         SetTeamButtons();
         DropTarget.Attach(PreviewCard, f => File.Exists(f) && ImageFiles.IsSupported(f), files => _ = ReplaceSelected(files[0]), PreviewCard);
@@ -141,6 +155,104 @@ public partial class TeamsModule : UserControl, IEditorModule
     public ModelViewport UniformView => _studio.View;
     public GearColoursPanel GearPanel => _gearPanel;
     public UniformStudio Studio => _studio;
+    public TeamDetailsPanel DetailsPanel => _detailsPanel;
+    public FullIcePanel FullIcePanel => _fullIcePanel;
+    public TruColorPanel TruColorPanel => _truColorPanel;
+
+    private void OnTruColor(object sender, RoutedEventArgs e) => ShowTruColor(TruColorButton.IsChecked == true);
+
+    /// <summary>Opens or closes the league colours importer (TruColor) in place of the art. It works on a league, so it needs no team.</summary>
+    public void ShowTruColor(bool on)
+    {
+        on &= _catalog != null;
+        if (on)
+        {
+            ShowDetails(false);
+            ShowUniform(false);
+            HideFullIce();
+            _truColorPanel.SetTeams(_team, _catalog!.Teams);
+        }
+        TruColorButton.IsChecked = on;
+        TruColorHost.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        if (!_studio.IsOpen && DetailsButton.IsChecked != true && FullIceButton.IsChecked != true)
+            ArtPanel.Visibility = FilePanel.Visibility = on ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    /// <summary>Closes the league colours importer when another editor takes the space.</summary>
+    private void HideTruColor()
+    {
+        if (TruColorButton.IsChecked != true)
+            return;
+        TruColorButton.IsChecked = false;
+        TruColorHost.Visibility = Visibility.Collapsed;
+    }
+
+    private void OnFullIce(object sender, RoutedEventArgs e) => ShowFullIce(FullIceButton.IsChecked == true);
+
+    /// <summary>Opens or closes the full-ice rink maker in place of the art.</summary>
+    public void ShowFullIce(bool on)
+    {
+        on &= _team != null;
+        if (on)
+        {
+            HideTruColor();
+            ShowDetails(false);
+            ShowUniform(false);
+            _fullIcePanel.SetTeam(_team, _catalog?.Teams ?? []);
+        }
+        FullIceButton.IsChecked = on;
+        FullIceHost.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        if (!_studio.IsOpen && DetailsButton.IsChecked != true)
+            ArtPanel.Visibility = FilePanel.Visibility = on ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    /// <summary>Closes the full-ice maker when another editor takes the space.</summary>
+    private void HideFullIce()
+    {
+        HideTruColor();
+        if (FullIceButton.IsChecked != true)
+            return;
+        FullIceButton.IsChecked = false;
+        FullIceHost.Visibility = Visibility.Collapsed;
+    }
+
+    private void OnTeamDetails(object sender, RoutedEventArgs e) => ShowDetails(DetailsButton.IsChecked == true);
+
+    /// <summary>Opens or closes the team details editor in place of the art.</summary>
+    public void ShowDetails(bool on)
+    {
+        on &= _team != null;
+        if (on && _studio.IsOpen)
+            ShowUniform(false);
+        if (on)
+            HideFullIce();
+        DetailsButton.IsChecked = on;
+        DetailsHost.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        if (!_studio.IsOpen)
+            ArtPanel.Visibility = FilePanel.Visibility = on ? Visibility.Collapsed : Visibility.Visible;
+        _detailsPanel.SetShowing(on);
+    }
+
+    /// <summary>Reads the team table again after a save, so names and colours shown follow it, staying on the same team.</summary>
+    private void ReloadTeams()
+    {
+        if (_index == null)
+            return;
+        var keep = _team?.Index;
+        var workspace = _services.Workspace;
+        var paths = _index.Rows.Where(r => r.File != null).Select(r => r.Path).ToList();
+        Task.Run(() => TeamCatalog.Load(workspace.ReadCurrent, paths, workspace.ReadStock)).ContinueWith(task =>
+        {
+            if (task.IsFaulted)
+            {
+                _services.ReportError("The teams could not be read again", task.Exception!.GetBaseException());
+                return;
+            }
+            _catalog = task.Result;
+            _team = keep is { } index ? _catalog.Teams.FirstOrDefault(t => t.Index == index) : null;
+            ShowTeams();
+        }, TaskScheduler.FromCurrentSynchronizationContext());
+    }
 
     private void OnGearColours(object sender, RoutedEventArgs e) => ShowUniform(GearButton.IsChecked == true);
 
@@ -196,7 +308,7 @@ public partial class TeamsModule : UserControl, IEditorModule
         var pathSet = paths.ToHashSet(StringComparer.Ordinal);
         _studio.SetGearModels(GearPreview.Models(GearPart.Gloves, pathSet), GearPreview.Models(GearPart.Helmet, pathSet));
         GalleryMessage.Text = "Reading the team table";
-        Task.Run(() => TeamCatalog.Load(workspace.ReadCurrent, paths)).ContinueWith(task =>
+        Task.Run(() => TeamCatalog.Load(workspace.ReadCurrent, paths, workspace.ReadStock)).ContinueWith(task =>
         {
             _loading = false;
             if (task.IsFaulted)
@@ -255,8 +367,12 @@ public partial class TeamsModule : UserControl, IEditorModule
     {
         if (Teams.SelectedItem is not TeamRow row)
             return;
-        if (!_gearPanel.SetTeam(row.Team))
+        var previousSheets = _gearPanel.Sheets;
+        _gearPanel.Sheets = UniformKits.From(_catalog!.ArtOf(row.Team));
+        if (!_gearPanel.SetTeam(row.Team) || !_detailsPanel.SetTeam(row.Team, _catalog!.Teams))
         {
+            if (_gearPanel.Team != row.Team)
+                _gearPanel.Sheets = previousSheets;
             // Unsaved colours were kept: stay on their team.
             Teams.SelectedItem = Teams.Items.Cast<TeamRow>().FirstOrDefault(r => r.Team == _team);
             return;
@@ -337,6 +453,14 @@ public partial class TeamsModule : UserControl, IEditorModule
         LogoSetButton.IsEnabled = hasLogos;
         ImportPackButton.IsEnabled = _team != null;
         GearButton.IsEnabled = _team != null && _kits.Count > 0;
+        DetailsButton.IsEnabled = _team != null;
+        if (_team == null && DetailsButton.IsChecked == true)
+            ShowDetails(false);
+        FullIceButton.IsEnabled = _team != null;
+        if (_team == null && FullIceButton.IsChecked == true)
+            ShowFullIce(false);
+        else if (FullIceButton.IsChecked == true)
+            _fullIcePanel.SetTeam(_team, _catalog?.Teams ?? []);
         if (!GearButton.IsEnabled && _studio.IsOpen)
             ShowUniform(false);
         else if (_studio.IsOpen)
@@ -532,7 +656,8 @@ public partial class TeamsModule : UserControl, IEditorModule
         AssetName.Text = art.Name;
         AssetSummary.Text = art.Section;
         EditorButton.IsEnabled = CopyButton.IsEnabled = true;
-        JerseyMapsButton.Visibility = JerseySheets.IsColourSheet(art.Path) ? Visibility.Visible : Visibility.Collapsed;
+        JerseyMapsButton.Visibility = JerseySheets.IsColourSheet(art.Path) || FontSheets.IsColourSheet(art.Path) ? Visibility.Visible : Visibility.Collapsed;
+        JerseyMapsButton.Content = FontSheets.IsColourSheet(art.Path) ? "Make normal and sm maps" : "Make normal and coeff maps";
         RevertButton.IsEnabled = edited;
         ExportButton.IsEnabled = art.IsTexture;
         ReplaceButton.IsEnabled = false;
@@ -600,8 +725,16 @@ public partial class TeamsModule : UserControl, IEditorModule
     public void ShowUniform(bool on)
     {
         on &= _team != null && _kits.Count > 0;
+        if (on)
+            HideFullIce();
+        if (on && DetailsButton.IsChecked == true)
+        {
+            DetailsButton.IsChecked = false;
+            DetailsHost.Visibility = Visibility.Collapsed;
+            _detailsPanel.SetShowing(false);
+        }
         GearButton.IsChecked = on;
-        ArtPanel.Visibility = FilePanel.Visibility = on ? Visibility.Collapsed : Visibility.Visible;
+        ArtPanel.Visibility = FilePanel.Visibility = on || DetailsButton.IsChecked == true ? Visibility.Collapsed : Visibility.Visible;
         StudioHost.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
         _studio.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
         _gearPanel.SetShowing(on && _team != null && GearColours.GearTeamOf(_team) != null);
@@ -739,11 +872,13 @@ public partial class TeamsModule : UserControl, IEditorModule
 
     private void OnJerseyMaps(object sender, RoutedEventArgs e) => MakeJerseyMaps();
 
-    /// <summary>Opens the selected jersey colour sheet in the Jersey Maps tab, which makes its maps.</summary>
+    /// <summary>Opens the selected jersey or font colour sheet in the Jersey Maps or Font Maps tab, which makes its maps.</summary>
     public void MakeJerseyMaps()
     {
         if (_selected is { } tile && JerseySheets.IsColourSheet(tile.Art.Path))
             _services.Navigate("Jersey Maps", tile.Art.Path);
+        else if (_selected is { } font && FontSheets.IsColourSheet(font.Art.Path))
+            _services.Navigate("Font Maps", font.Art.Path);
     }
 
     private void OnCopyPath(object sender, RoutedEventArgs e)

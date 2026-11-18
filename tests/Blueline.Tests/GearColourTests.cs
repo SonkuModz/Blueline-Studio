@@ -82,18 +82,68 @@ public sealed class GearColourTests
     }
 
     [TestMethod]
-    public void TorontoHomeGlovesTakeTheUnusedRow()
+    public void TorontoHomeGlovesGetANewRowAndLeaveVariant6Alone()
     {
+        // Row 995 (variant 6) has no jersey row, but a kit with only gear rows can still be worn (Buffalo's Goathead wore
+        // variant 3 in game), so it counts as a kit and is not taken.
         var gear = OpenGear();
         var leafs = Team("Toronto Maple Leafs");
         var home = gear.KitsOf(leafs).Single(k => k.Label == "Home");
-        Assert.AreEqual(995, gear.UnusedRow(leafs, GearPart.Gloves)!.Index);
+        Assert.IsTrue(gear.KitsOf(leafs).Any(k => k.FromGearRowsOnly && k.Variant == 6));
+        Assert.IsNull(gear.UnusedRow(leafs, GearPart.Gloves));
 
         var (row, added) = gear.GiveOwnRow(leafs, home, GearPart.Gloves);
-        Assert.IsFalse(added);
-        Assert.AreEqual(995, row.Index);
+        Assert.IsTrue(added);
+        Assert.AreEqual(1, row.Variant);
+        Assert.AreEqual(6, gear.RowsOf(28).Single(r => r.Index == 995).Variant);
         Assert.AreEqual(GearLink.Own, gear.Resolve(28, home, GearPart.Gloves).Link);
         Assert.AreEqual(GearLink.Fallback, gear.Resolve(28, gear.KitsOf(leafs).Single(k => k.Label == "Away"), GearPart.Gloves).Link);
+    }
+
+    [TestMethod]
+    public void BuffaloGoatheadIsKit3EvenAfterItsRowWasMoved()
+    {
+        var gear = OpenGear();
+        var sabres = Team("Buffalo Sabres");
+        var two = new UniformKit("adidas", "buffalo", "two", "jersey_adidas_buffalo_two_cm", null, null);
+        Assert.AreEqual(3, gear.KitFor(sabres, two)!.GearVariant, "Seen in game: the Goathead wore gear variant 3.");
+
+        // What the old "Own row" did: row 142 (variant 3) re-pointed to Home.
+        var row142 = gear.RowsOf(4).Single(r => r.Index == 142);
+        gear.File.Tables.Single(t => t.Label == GearColours.TableName).Write(row142.Row,
+            gear.File.Tables.Single(t => t.Label == GearColours.TableName).Fields.Single(f => f.Label == "variant"), 1);
+        Assert.IsFalse(gear.KitsOf(sabres).Any(k => k.Variant >= 3), "Without its sheets, nothing says the team has a third kit.");
+
+        gear.UseSheets(sabres, [two]);
+        var goathead = gear.KitsOf(sabres).Single(k => k.FromGearRowsOnly);
+        Assert.AreEqual(3, goathead.GearVariant);
+        Assert.AreEqual(goathead, gear.KitFor(sabres, two));
+        var (row, added) = gear.GiveOwnRow(sabres, goathead, GearPart.Helmet);
+        Assert.IsTrue(added);
+        Assert.AreEqual(3, row.Variant);
+        Assert.AreEqual(GearLink.Own, gear.Resolve(4, goathead, GearPart.Helmet).Link);
+    }
+
+    [TestMethod]
+    public void RosterRowForAKitWithNoneHereIsFlaggedUntilItGetsOne()
+    {
+        // Seen in game: the project moved row 142 to Home, the roster save kept it as the Goathead's gloves, and the game
+        // showed the roster's royal blue whatever the project's fallback said.
+        var project = OpenGear();
+        var roster = OpenGear();
+        var sabres = Team("Buffalo Sabres");
+        var two = new UniformKit("adidas", "buffalo", "two", "jersey_adidas_buffalo_two_cm", null, null);
+        var table = project.File.Tables.Single(t => t.Label == GearColours.TableName);
+        table.Write(project.RowsOf(4).Single(r => r.Index == 142).Row, table.Fields.Single(f => f.Label == "variant"), 1);
+        project.UseSheets(sabres, [two]);
+        var goathead = project.KitFor(sabres, two)!;
+
+        Assert.AreEqual(142, project.RowOnlyInRoster(roster, 4, goathead, GearPart.Gloves)?.Index);
+        Assert.IsNull(project.RowOnlyInRoster(roster, 4, goathead, GearPart.Helmet), "neither has a kit 3 helmet row");
+        Assert.IsNull(roster.RowOnlyInRoster(roster, 4, goathead, GearPart.Gloves), "the same row on both sides is not flagged");
+
+        project.GiveOwnRow(sabres, goathead, GearPart.Gloves);
+        Assert.IsNull(project.RowOnlyInRoster(roster, 4, goathead, GearPart.Gloves), "with its own row here, the sync writes over the roster's");
     }
 
     [TestMethod]

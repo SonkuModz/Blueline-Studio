@@ -210,6 +210,55 @@ cell and shots strip, the clock divider, tracking tightened on the clock digits.
 - The remaining items need the ActionScript changed (RESEARCH 6.9 lists the hard coded numbers). Patching literal numbers is possible, new logic
   could not be tested without the game.
 
+## 5c. Goal animation in game (2026-11-15) and where to pick up
+
+**What is built.** The goal animation is new code, not a layout trick. `SportsnetGoal.cs` holds the timeline from section 3 as data.
+`ClockScript.cs` compiles it into the score clock's `_createScriptAnimGoal` method in `nhl/ui/lib/nhluidata.swf` (the swf and ABC
+reader and writer are in `src/Blueline.Formats/Flash`). The layout parts (blue, white and blue bars under the team colour `tint`,
+four GOAL letter labels, the streak) are added by `SportsnetBug.RestyleGoal`. `blueline sportsnet <project> <game>` writes both.
+The swf ships in a `patch_inxp_99` archive and the layout in a rebuilt `boot.big` (`blueline boot-build`).
+`SportsnetGoalTests` checks the bar edges against the frame table, and the generated code against the real swf.
+
+**Preview.** `blueline goal-frames > values.jsonl`, then `scratchpad/goalprev/render.py <folder>` draws the script under each video
+frame (key frame sheet and a GIF). The user wants previews like this before changes go into the game.
+
+**Seen in game** (sandbox, user screenshots):
+
+| Try | Result |
+| --- | --- |
+| First build | Works: the bar wipes in, the team colour, GOAL, streak and faint logo show, and the bug rebuilds. User: the logo and GOAL are not centred, and it is a little too fast. |
+| Logo centred, GOAL font 240 (was 180), 1.2 times slower (`GameStretch`) | GOAL drew **the same size as at 180**, and still high in the bar. |
+| Calibration: G as before, O with no box height, A in a 320 wide box, L scaled 1.5 by the script (`addProps scaleX/scaleY`) | **Only L grew.** G, O and A are the same size, so `fontSize`, box height and box width do not set the size the game draws. Script scale does. L at 1.5 is too big. |
+
+| GOAL scaled 1.34 high and 1.1 wide by the script, centred on the bar both ways (2026-11-16) | **User: "it looks good".** Done. |
+
+The faint logo was checked against the calibration screenshot: it is centred (leaf 220 to 351 px, middle 274 against the bar's 273.5).
+The Leafs wordmark sits left inside its logo, which made it look off. All team logo images are centred in their pictures.
+
+**Next steps** (1 to 4 are done as of 2026-11-16):
+
+1. **GOAL size:** drop the calibration (`LetterWidths`, `LetterScales`, `LetterHasHeight` in `SportsnetGoal.cs`). Size all four
+   letters with script `scaleX`/`scaleY`. In the last screenshot the plain letters' caps are about 40 of the bar's 92 px (43 percent);
+   the broadcast's are 79 percent, so a scale of about 1.3 to 1.4, not 1.5. A label scales from its top left corner, so set `x` and `y`
+   to keep each letter's centre (`LetterLeft` already allows for the scale on `x`; `y` needs the same).
+2. **GOAL vertical centre:** the caps sit high. In the screenshot their centre is about 35 px down a bar whose centre is about 49 px down.
+   Once the scale is fixed, move `LetterY` down to centre them.
+3. **GOAL horizontal centre:** the user says GOAL is still not centred. The four cells are centred on the broadcast's text box, which
+   is 4 design units right of the bar's centre. Centre them on `GoalWidth / 2` instead, then check against a screenshot.
+4. **Faint logo:** in the last screenshot the faint logo's visible text (the Leafs wordmark) is left of the bar's centre, although
+   `SwirlX` is `GoalWidth / 2`. Check whether the logo art is not centred on its holder (the stock `logo` sits at -58, -58 in a 117 box)
+   or whether the holder is placed from another point.
+5. **Power play, stats, warnings** (user request): match `pp.png` and `stats.png`, and make sure the game's own drop-downs (offside,
+   icing, delayed penalty, empty net, comparisons, shootout) fit the Sportsnet bug. Their sizes and moves are numbers in the game's
+   code (`_getShowPowerPlayScript`, `_createScriptAnimDropDownStats`, `_createScriptAnimWarning`, `_createScriptExtendy`): heights
+   35, 45 and 37 and widths 86, 247, 248, 408 and 742. Those methods branch, so they cannot be rebuilt with `ClockScript`; numbers can
+   only be patched in place at the same instruction length. The warning and clock drop-downs are 247 wide at x 495, but the clock
+   cell is 192 wide now, so they overhang. The logo tile that pushes the clock right, and the "LAST 10 GAMES 9/24" panel, need
+   new logic or data. Previews of every state were rendered by the app's capture tour into `scratchpad/tourdd` (`09k*` files),
+   on the copy project `scratchpad/snprev`. Show them to the user before changing anything.
+6. **Shots row:** the score clock never receives shot counts (not in its code, not in the overlay data Lua). They only come in the
+   stats drop-down, one comparison at a time. Options for the user: keep the row with only `SHOTS`, or remove the row.
+
 ## 6. Not seen
 
 - Anything other than the right hand team scoring; the away side's goal wipe (does it run from the right or reuse the left to right sweep?).

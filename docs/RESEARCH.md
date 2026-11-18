@@ -272,6 +272,26 @@ block layout (`0x48` header, `0x44` data, `0x45` end).
 the bank. Same-slot replacement has not been heard in game. How the game seeks inside a bank is unknown, so a
 sample cannot grow.
 
+### 6.1.1 Goal horns, 2026-11-15
+
+- **Audio:** `nhl/data/kettle/audio/sfx/hornbank.sbr` (`inxp_40`), self-contained, 410 samples at 48 kHz.
+  - 405 are EA Opus stereo; 5 are codec 0xB (EA MP3, mono).
+  - Its tail holds a DSET: a count (413) and a u16 id per row.
+  - Then come u32 offsets, each relative to the first sample at 0x64; three rows share a sample.
+  - Those ids are not horn numbers.
+- **EA Opus chain:**
+  - `48` block with the 8-byte header.
+  - `44` blocks of [u32 BE samples][u16 BE length + raw Opus packet]..., holding 20 ms CELT packets, 11 to a block. The first block declares 312 (pre-skip) fewer samples.
+  - A lone last packet joins the block before it when it would hold fewer than 312 real samples.
+  - `45` block padded to 4 bytes.
+  - **Verified:** all 405 rebuild byte for byte through Ogg Opus (`GoalHornTests`), and FFmpeg's libopus decodes and encodes them.
+- **Assignment:** `exhibitionarena.goalhorn` (and the roster save's copy, which wins) is the GoalHornID enum of `goalhornpatch.ptc` (in `sfx_ptc.big`) plus one.
+  - The enum: 31 clubs, 9 `Future_NHL_team` slots, Generic (41), then 85 novelty horns, matching `creation_zone_csv/goalhorns.csv` `audioid` + 1.
+  - Every stock AHL arena holds 41, except Manitoba (2, Winnipeg) and San Jose Barracuda (26, San Jose).
+  - **Inferred** from the values; not yet confirmed in game.
+- **Horn to sample:** the bank's DSET list (413 entries: u16 ids at 0x2a99318, u32 offsets at 0x2a99654, +0x64) runs in GoalHornID order. Entry `horn - 10` is novelty horn 42..126's sample; e.g. Car 1..Car 8 are entries 39..46 = samples 63..56. Checked in game with the spoken bank (`horn-label`): Car 1 says 63, Car 5 says 59. Entries 0..30 are probably the NHL clubs and entry 31 Generic (sample 404); not heard. The table is `GoalHorns.NoveltySamples`.
+- **Confirmed in game:** a modded hornbank.sbr in patch_inxp_99 is loaded, and an AHL arena's `goalhorn` changes the horn it plays.
+
 ### 6.2 TDB databases
 
 `44 42 00 08`, little-endian. Verified on NHL 19 with the MSB-first CRC-32 (poly `0x04C11DB7`, init `0xFFFFFFFF`, no
@@ -852,6 +872,55 @@ the other zones were kept.
 | 908 | helmet, 3 / 2 | `FFFFFF` | Away helmet (**proves gear variant 2 = Away**) |
 | 901 | gloves, 3 / 3 | `041E42` (zone 6 cream, zone 8 gold kept) | Alternate gloves; the logo showed cream, so zone 6 is the logo on this row |
 | 909 | helmet, 3 / 3 | `041E42` | Alternate helmet |
+
+### 6.11 Font normal and sm maps, 2026-11-16
+
+**The question.** What do the game's number fonts (`font_<brand>_<team>_<kit>_{cm,nm,sm}.gnf`) hold, so a new font's
+`_nm` and `_sm` can be made from its colour sheet? Measured on 120 random stock fonts of all three brands (Read).
+`FontMaps` in `Blueline.Core/Teams` and the Font Maps tab make them; nothing made this way has been seen in game yet.
+
+- **Formats (Read).** All 1,315 fonts are 1024x1024: `_cm` BC3 sRGB, `_nm` BC5 SNorm, `_sm` BC1 sRGB, 11 mips. Two have
+  no `_nm`, and Toronto's home font has only its `_cm`.
+- **Colour (Read).** The letters are in `_cm`'s alpha. Every font uses the same layout: two rows of letters, big
+  numbers with C and A, then two rows of small numbers. NHL 27's font colour sheets use the same layout at 2048.
+- **Normal (Read).** Red and green only, blue 0, the same direction as the jerseys (6.7): letters are raised. The edge
+  is a sharp lip and then a rounding. The median slope, as stored offset from 128 at 1 to 5 px inside an edge, is 86, 47,
+  38, 28 and 21. `FontMaps` fits this with a 1 px lip carrying 0.4 of the height plus an ease-out 10 px wide. Where
+  a font has an outline, the fill usually sits a step above it, as layered tackle twill does: the correlation is
+  positive on most fonts and negative on a few. A beaded stitch runs just inside every layer's edge. The champions
+  sheets are flat prints with weak edges.
+- **Sm (Read).** It is 0 off the letters. On them it is a flat grey per layer with per-pixel felt speckle:
+  - The fill is 24 to 32, median 30.
+  - The outline is 20 to 32, median 24.
+  - The bottom row of small numbers is 50 on most fonts and the same as the letters on the rest.
+
+  What `_sm` does in the shader is not known.
+
+### 6.12 Fitting a sheet to another brand's jersey, 2026-11-16
+
+NHL 27's "rbk" jersey sheets are drawn in NHL 19's **adidas** layout, not its rbk one. Put straight into an rbk slot,
+they mostly fit, but NHL 27's dark collar patch (27,27,27, bottom-left of the sheet) lands on the rbk jersey's lower side
+panel. In game that shows as a black stripe under the arm, and some stripes smear onto the sides.
+
+`JerseyRefit` (Core/Teams) fits a sheet from one brand's jersey to another's through the meshes' shared 3D shape:
+- The target jersey (`jersey_skater_<brand>_notuck_large_high`) is drawn into its UV layout. Its bounding box is fitted
+  onto the source jersey's, and each texel gets its 3D point.
+- Each point takes the exact closest point on the source jersey whose face points the same way (|dot| > 0.5) and reads
+  the source UV there. Taking the nearest of a grid of samples instead made the crests blocky in game.
+- The reading is smoothed piece by piece. Pieces are split wherever neighbours read more than 10 texels (at 2048)
+  apart: real seams. Each piece is blurred over a wide window (sigma about 32 texels), with a first-order correction so
+  the stretch is not pulled at a piece's edges. Slivers under 400 texels take their neighbours' value. A first version
+  used narrow blurs and left far-moved texels as they were; in game that gave notched logos, wobbly side stripes and
+  small steps along their edges.
+- Any texel the smoothing carries off the source jersey on the sheet moves back toward its exact reading, only as far as
+  it must. Without this, the edges of the sleeves and armpits read the dark area around NHL 27's pieces.
+- For normal maps, red and green are turned from the source tangent frame into the target's, keeping their strength.
+  Blue stays 0.
+- The covered area is padded 8 texels. Past that, a texel reads its own spot.
+
+All 185 converted NHL 27 rbk kits were fitted. The earlier versions were checked in game; the piece-by-piece smoothing
+has not been seen in game yet. The Jersey Maps tab has a Layout card
+("Drawn for", "Fit to this jersey"), and the CLI has `jersey-refit`.
 
 ## 7. Requirements that follow
 

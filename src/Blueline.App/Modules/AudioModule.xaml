@@ -53,7 +53,7 @@
             <TextBlock Style="{StaticResource Section}" Text="REPLACE" />
             <TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,0,0,8"
                        Text="Drop a WAV on the sample list, or choose one. It is encoded in this sample's codec at the best quality that fits its slot. A slot cannot grow, because how the game seeks in a bank is not established." />
-            <Button x:Name="Replace" Content="Replace from WAV" Margin="0,0,0,6" Click="OnReplace" />
+            <Button x:Name="Replace" Content="Replace from audio" ToolTip="WAV, MP3, OGG, FLAC and more for EA Opus samples (through FFmpeg); WAV for the others (through sx.exe). It must fit the sample's slot." Margin="0,0,0,6" Click="OnReplace" />
             <Button x:Name="RevertBank" Content="Revert bank" Click="OnRevert" />
           </StackPanel>
         </Border>

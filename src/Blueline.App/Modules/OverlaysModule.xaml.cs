@@ -189,7 +189,7 @@ public partial class OverlaysModule : UserControl, IEditorModule
         var workspace = _services.Workspace;
         var paths = vfs.Files.Select(f => f.Path).ToList();
         var needTeams = AwayBox.Items.Count == 0;
-        Task.Run(() => (OverlayCatalog.Build(workspace.ReadCurrent, paths), needTeams ? TeamCatalog.Load(workspace.ReadCurrent, paths).Teams : null)).ContinueWith(task =>
+        Task.Run(() => (OverlayCatalog.Build(workspace.ReadCurrent, paths), needTeams ? TeamCatalog.Load(workspace.ReadCurrent, paths, workspace.ReadStock).Teams : null)).ContinueWith(task =>
         {
             if (run != _catalogRun)
                 return;

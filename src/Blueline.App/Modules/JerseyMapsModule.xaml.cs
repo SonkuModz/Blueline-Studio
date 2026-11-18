@@ -135,6 +135,7 @@ public partial class JerseyMapsModule : UserControl, IEditorModule
     private void UpdateButtons()
     {
         ApplyButton.IsEnabled = ExportButton.IsEnabled = _made != null && !IsBusy;
+        FitButton.IsEnabled = _loaded != null && !IsBusy && FitFromBox.SelectedItem is ComboBoxItem;
         RevertButton.IsEnabled = _loaded is { } l && (l.NormalEdited || l.CoeffEdited);
         ColourOptions.Visibility = FromPicture ? Visibility.Collapsed : Visibility.Visible;
         PictureOptions.Visibility = FromPicture ? Visibility.Visible : Visibility.Collapsed;
@@ -160,6 +161,7 @@ public partial class JerseyMapsModule : UserControl, IEditorModule
         KitText.Text = $"{sheets.BrandLabel}: making {Path.GetFileName(sheets.Normal)} and {Path.GetFileName(sheets.Coeff)}";
         StateText.Text = "";
         FillBaseChoices(sheets.Brand);
+        FillFitChoices(sheets.Brand);
         IsBusy = true;
         if (_loaded?.Sheets != sheets)
             Preview.ShowMessage("Reading the sheets");
@@ -462,6 +464,56 @@ public partial class JerseyMapsModule : UserControl, IEditorModule
         {
             project.SetMany(items, $"Jersey maps for {name}");
             _services.Notify($"Saved the normal and coeff maps for {name}.");
+        });
+    }
+
+    private static string BrandLabel(string brand) => brand switch { "adidas" => "Adidas", "rbk" => "Reebok", "nineties" => "Nineties", _ => brand };
+
+    /// <summary>The other brands' jerseys a sheet may have been drawn for. Adidas first: NHL 27's rbk kits are drawn for it.</summary>
+    private void FillFitChoices(string brand)
+    {
+        var keep = (FitFromBox.SelectedItem as ComboBoxItem)?.Tag as string;
+        FitFromBox.Items.Clear();
+        foreach (var other in JerseyRefit.Brands.Where(b => b != brand))
+            FitFromBox.Items.Add(new ComboBoxItem { Content = $"The {BrandLabel(other)} jersey", Tag = other });
+        FitFromBox.SelectedItem = FitFromBox.Items.OfType<ComboBoxItem>().FirstOrDefault(i => (string)i.Tag == keep) ?? FitFromBox.Items[0];
+    }
+
+    private void OnFit(object sender, RoutedEventArgs e) => _ = FitAsync();
+
+    /// <summary>Fits the colour sheet, and the project's normal map if it has one, from another brand's layout to this jersey's.</summary>
+    public async Task FitAsync()
+    {
+        if (_loaded is not { } loaded || FitFromBox.SelectedItem is not ComboBoxItem { Tag: string from } || _services.Workspace.Vfs is not { } vfs ||
+            _services.RequireProject() is not { } project)
+            return;
+        var sheets = loaded.Sheets;
+        var quality = Quality;
+        var name = Path.GetFileName(sheets.Colour).Replace("_cm.gnf", "");
+        await _services.Jobs.RunAsync($"Fitting {name} from the {BrandLabel(from)} jersey", context =>
+        {
+            byte[]? Read(string path) => vfs.Find(path) is { } file ? vfs.ReadContent(file) : null;
+            context.Status($"Matching the {BrandLabel(from)} jersey to the {sheets.BrandLabel} jersey");
+            var map = JerseyRefit.Map(Read, from, sheets.Brand);
+            var fitted = new List<(string Path, RgbaImage Image, string What)> { (sheets.Colour, JerseyRefit.Colour(map, loaded.Colour), "Jersey colour") };
+            if (loaded.NormalEdited)
+                fitted.Add((sheets.Normal, JerseyRefit.Normal(map, loaded.CurrentNormal), "Jersey normal map"));
+            var items = new List<(string, byte[], string)>();
+            foreach (var (path, image, what) in fitted)
+            {
+                var original = Read(path) ?? throw new InvalidDataException($"{path} is not in the game.");
+                if (TexturePipeline.ImportBlocker(original) is { } blocker)
+                    throw new NotSupportedException($"{Path.GetFileName(path)}: {blocker}");
+                context.Status($"Encoding {Path.GetFileName(path)}");
+                items.Add((path, TexturePipeline.Import(original, image, quality).Gnf, $"{what}, fitted from the {BrandLabel(from)} jersey"));
+            }
+            return items;
+        }, items =>
+        {
+            project.SetMany(items, $"Fitted {name} from the {BrandLabel(from)} jersey");
+            _services.Notify(items.Count > 1
+                ? $"Fitted the colour sheet and normal map of {name} to the {sheets.BrandLabel} jersey. Make the maps again so they follow the new layout."
+                : $"Fitted the colour sheet of {name} to the {sheets.BrandLabel} jersey. Make the maps again so they follow the new layout.");
         });
     }
 

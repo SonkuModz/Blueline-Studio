@@ -87,6 +87,8 @@ public static class OverlayBuilder
             var audit = EbAudit.Check(archive);
             if (!audit.Clean)
                 throw new BuildFailedException($"{name} failed its structure check: {string.Join("; ", audit.Problems.Take(5))}");
+            if (audit.GameProblem is { } gameProblem)
+                throw new BuildFailedException($"{name} would not load in the game: {gameProblem}");
             if (archive.Entries.Count != changes.Count)
                 throw new BuildFailedException($"{name} holds {archive.Entries.Count} files, expected {changes.Count}.");
 

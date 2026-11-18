@@ -28,12 +28,17 @@ public sealed class EbArchive : IDisposable
     public const uint FlagHashedRows = 0x10000;
     public const int HeaderSize = 0x30;
 
+    /// <summary>Where the one-byte-per-file table starts: after the rows, on a 16-byte boundary.</summary>
+    public static int FlagTableOffset(int fileCount, int rowSize) => (HeaderSize + fileCount * rowSize + 15) & ~15;
+
     private readonly FileStream _stream;
 
-    private EbArchive(string path, FileStream stream, uint flags, long declaredSize,
+    private EbArchive(string path, FileStream stream, uint flags, long declaredSize, long nameOffset, int rowSize,
         int fileRecordLength, int folderRecordLength, IReadOnlyList<string> folders, IReadOnlyList<EbEntry> entries)
     {
         FilePath = path;
+        NameOffset = nameOffset;
+        RowSize = rowSize;
         _stream = stream;
         Flags = flags;
         DeclaredSize = declaredSize;
@@ -47,6 +52,22 @@ public sealed class EbArchive : IDisposable
     public string Name => System.IO.Path.GetFileName(FilePath);
     public uint Flags { get; }
     public long DeclaredSize { get; }
+    public long NameOffset { get; }
+    public int RowSize { get; }
+
+    /// <summary>
+    /// The one-byte-per-file table between the rows and the names, or null when the names start too early to leave room
+    /// for it (archives from Blueline before 0.10.1). Stock archives always hold zeros here.
+    /// </summary>
+    public byte[]? ReadFileFlags()
+    {
+        var start = FlagTableOffset(Entries.Count, RowSize);
+        if (start + Entries.Count > NameOffset)
+            return null;
+        var table = new byte[Entries.Count];
+        RandomAccess.Read(_stream.SafeFileHandle, table, start);
+        return table;
+    }
     public int FileRecordLength { get; }
     public int FolderRecordLength { get; }
     public IReadOnlyList<string> Folders { get; }
@@ -124,7 +145,7 @@ public sealed class EbArchive : IDisposable
                 hash);
         }
 
-        return new EbArchive(path, stream, flags, declared, fileRecord, folderRecord, folders, entries);
+        return new EbArchive(path, stream, flags, declared, nameOffset, rowSize, fileRecord, folderRecord, folders, entries);
     }
 
     private static string ReadText(ReadOnlySpan<byte> field)

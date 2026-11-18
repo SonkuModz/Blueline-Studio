@@ -44,6 +44,9 @@ public sealed class Workspace(SessionLog log) : IDisposable
         return file == null ? null : Vfs!.ReadContent(file);
     }
 
+    /// <summary>A path's content in the game without the mods folder or the project, for what mods leave in place, such as art ids.</summary>
+    public byte[]? ReadStock(string path) => Vfs?.ReadStock(path);
+
     public bool IsEdited(string path) => Project != null && Project.TryGet(path, out _);
 
     public void Dispose() => Vfs?.Dispose();

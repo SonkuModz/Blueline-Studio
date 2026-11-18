@@ -210,6 +210,22 @@ public sealed class FfmpegTool(string executable, string probe)
             throw new InvalidDataException($"The encoded video does not match the game's. Made: {made.Summary}. Needed: {target.Summary}.");
     }
 
+    /// <summary>Runs FFmpeg for an audio conversion; fails unless <paramref name="output"/> was written.</summary>
+    public async Task RunAudioAsync(string output, CancellationToken cancel, params string[] arguments)
+    {
+        var (_, errors, code) = await RunAsync(Executable, null, null, cancel, ["-hide_banner", "-v", "error", "-y", .. arguments]);
+        if (code != 0 || !File.Exists(output))
+            throw new InvalidOperationException("FFmpeg could not convert this audio: " + LastLine(errors));
+    }
+
+    /// <summary>Converts any still picture FFmpeg reads (JPEG, WebP, AVIF, ...) to a PNG.</summary>
+    public async Task ImageToPngAsync(string source, string output, CancellationToken cancel = default)
+    {
+        var (_, errors, code) = await RunAsync(Executable, null, null, cancel, "-hide_banner", "-v", "error", "-y", "-i", source, "-frames:v", "1", "-pix_fmt", "rgba", output);
+        if (code != 0 || !File.Exists(output))
+            throw new InvalidOperationException("FFmpeg could not read this picture: " + LastLine(errors));
+    }
+
     private async Task RunToFileAsync(string output, double seconds, Action<double>? progress, CancellationToken cancel, List<string> arguments)
     {
         void OnLine(string line)

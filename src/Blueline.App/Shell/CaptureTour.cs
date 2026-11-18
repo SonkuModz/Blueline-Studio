@@ -126,6 +126,75 @@ public sealed class CaptureTour(MainWindow window, bool pressPlay = false)
                 await TeamsSettled(teams);
             });
 
+            // Full ice: a whole-rink picture (tour-rink.jpg, if put in the capture folder) and a plain rink, written
+            // into the throwaway project with the model from references/ when it is there.
+            var rinkPicture = Path.Combine(folder, "tour-rink.jpg");
+            if (File.Exists(rinkPicture))
+                await Step("05d2-full-ice-picture", async () =>
+                {
+                    teams.SelectTeam("Toronto Maple Leafs");
+                    await TeamsSettled(teams);
+                    teams.ShowFullIce(true);
+                    await teams.FullIcePanel.FromPicture(rinkPicture, Blueline.Core.Rinks.FullIceFit.Layout);
+                    await WaitForJobs();
+                    await Idle();
+                });
+
+            await Step("05d3-full-ice-plain", async () =>
+            {
+                teams.SelectTeam("Boston Bruins");
+                await TeamsSettled(teams);
+                teams.ShowFullIce(true);
+                await teams.FullIcePanel.MakePlain();
+                await WaitForJobs();
+                var model = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "references", "rink_ice_nhl.mcd");
+                if (File.Exists(model))
+                {
+                    var before = services.Settings.FullIceModelPath;
+                    services.Settings.FullIceModelPath = Path.GetFullPath(model);
+                    var changes = services.Workspace.Project!.ChangeCount;
+                    teams.FullIcePanel.Write();
+                    services.Settings.FullIceModelPath = before;
+                    Note($"Write into team changed {services.Workspace.Project.ChangeCount - changes} files");
+                }
+                await Idle();
+                teams.ShowFullIce(false);
+            });
+
+            // League colours from TruColor: reads the cache when it holds the pages, else fetches the index and one league.
+            await Step("05d4-league-colours", async () =>
+            {
+                window.Navigate("Teams", null);
+                await WaitFor(() => !teams.IsLoading);
+                teams.SelectTeam("Toronto Maple Leafs");
+                await TeamsSettled(teams);
+                teams.ShowTruColor(true);
+                await teams.TruColorPanel.Fetch();
+                await WaitForJobs();
+                await Idle();
+                Note($"League colours: {teams.TruColorPanel.RowCount} teams, {teams.TruColorPanel.ChangeCount} values would change");
+            });
+            await Step("05d5-league-colours-other-team", async () =>
+            {
+                // Picking another team keeps the league panel in place of the art.
+                teams.SelectTeam("Boston Bruins");
+                await TeamsSettled(teams);
+                await Idle();
+            });
+            await Step("05d6-league-colours-written", async () =>
+            {
+                // Into the throwaway tour project only.
+                var before = services.Workspace.Project?.ChangeCount ?? 0;
+                var written = teams.TruColorPanel.WriteNow();
+                var data = services.Workspace.ReadCurrent(Core.Teams.TeamCatalog.DatabasePath)!;
+                var file = Formats.Tdb.TdbFile.Parse((byte[])data.Clone());
+                file.ApplyMeta(System.Text.Encoding.UTF8.GetString(services.Workspace.Vfs!.ReadContent(services.Workspace.Vfs.Find(Core.Teams.TeamCatalog.MetaPath)!)));
+                var leafs = services.Workspace.Vfs != null ? Core.Teams.TeamDetails.Open(file).FieldsOf(27).FirstOrDefault(f => f.Key == "team.feprimarycolor") : null;
+                Note($"League colours written: {written} values, project changes {before} -> {services.Workspace.Project?.ChangeCount}, team 27 menu primary now {(leafs == null ? "?" : Core.Teams.GearColours.Hex(Convert.ToInt32(leafs.Value)))}");
+                await Idle();
+            });
+            teams.ShowTruColor(false);
+
             await Step("05e-teams-other-league", async () =>
             {
                 teams.SelectTeam("Adler Mannheim");

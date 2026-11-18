@@ -96,6 +96,10 @@ public partial class BuildModule : UserControl, IEditorModule
             : installed ? "Installed: " + string.Join(", ", project.Installed.Select(i => i.FileName))
             : _build == null ? "Build first to install." : "Ready to install.";
         RevertSelected.IsEnabled = Changes.SelectedItems.Count > 0;
+        var hasDatabase = project != null && project.TryGet(Core.Teams.TeamCatalog.DatabasePath, out _);
+        RosterSyncButton.IsEnabled = hasDatabase && vfs != null && !_services.Jobs.IsBusy;
+        if (!hasDatabase)
+            RosterState.Text = project == null ? "" : "This project has no database edits to copy.";
 
         var mods = vfs != null ? ModInstaller.InstalledMods(vfs.Install) : [];
         Installed.ItemsSource = mods;
@@ -287,19 +291,125 @@ public partial class BuildModule : UserControl, IEditorModule
         if (_services.Workspace.Project is not { } project || _services.Workspace.Vfs is not { } vfs || _build == null)
             return;
         var names = string.Join(", ", _build.Archives.Select(a => a.FileName));
-        if (!ConfirmDialog.Ask("Install this mod?", $"This copies {names} into {vfs.Install.Databigs}. The game will load it the next time it starts. Your original archives are not changed.", "Install"))
+        var message = $"This copies {names} into {vfs.Install.Databigs}. The game will load it the next time it starts. Your original archives are not changed.";
+        IReadOnlyList<InstallOverlap> overlaps;
+        try
+        {
+            overlaps = ModInstaller.Overlaps(project, vfs.Install, _build);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or Blueline.Formats.Eb.EbFormatException or InvalidDataException)
+        {
+            _services.ReportError("The built archives could not be read", error);
             return;
+        }
+
+        var removeOthers = false;
+        if (overlaps.Count == 0)
+        {
+            if (!ConfirmDialog.Ask("Install this mod?", message, "Install"))
+                return;
+        }
+        else
+        {
+            var lines = string.Join("\n", overlaps.Select(o => $"\u2022 {o.FileName}: {o.Shared:N0} file{(o.Shared == 1 ? "" : "s")}, like {Path.GetFileName(o.Examples[0])}"));
+            var choice = ConfirmDialog.Choose("Other mods hold the same files",
+                $"These installed mods also hold files this mod changes:\n{lines}\n\nWhen two installed mods hold the same file the game can draw it wrong, for example as a black board. "
+                + "Removing them keeps only this mod's copy. Their projects can install them again.\n\n" + message,
+                overlaps.Count == 1 ? "Remove it and install" : $"Remove {overlaps.Count} and install", "Install anyway");
+            if (choice < 0)
+                return;
+            removeOthers = choice == 0;
+        }
 
         try
         {
+            if (removeOthers)
+                foreach (var overlap in overlaps)
+                {
+                    ModInstaller.RemoveOther(vfs.Install, overlap.FileName);
+                    _services.Log.Info($"Removed {overlap.FileName}: it held {overlap.Shared} of the same files.");
+                }
             ModInstaller.Install(project, vfs.Install, _build);
-            _services.Notify($"Installed {names}.");
+            _services.Notify($"Installed {names}." + (removeOthers ? $" Removed {string.Join(", ", overlaps.Select(o => o.FileName))}." : ""));
         }
         catch (Exception error) when (error is InstallBlockedException or IOException or UnauthorizedAccessException)
         {
             _services.ReportError("The mod was not installed", error);
         }
         Refresh();
+    }
+
+    private void OnRosterSync(object sender, RoutedEventArgs e)
+    {
+        if (_services.Workspace.Project is not { } project || _services.Workspace.Vfs is not { } vfs
+            || !project.TryGet(Core.Teams.TeamCatalog.DatabasePath, out var stored))
+            return;
+        if (_services.Settings.EmulatorPath is not { Length: > 0 } emulatorPath || !File.Exists(emulatorPath))
+        {
+            _services.ReportError("No emulator is set", "Choose shadPS4 in Settings first, so Blueline knows where the game's saves are.");
+            return;
+        }
+        var emulator = new Core.Emulator.ShadInstall(emulatorPath);
+        var folder = Path.Combine(Core.Teams.RosterSync.SaveDataFolder(emulator.UserFolder), Core.Teams.RosterSync.CustomRoster);
+        if (!Blueline.Formats.Tdb.RosterSave.IsRosterSave(folder))
+        {
+            _services.ReportError("There is no custom roster save", $"Nothing was found at {folder}. Load or save a custom roster in the game first.");
+            return;
+        }
+
+        Blueline.Formats.Tdb.RosterSave save;
+        Core.Teams.RosterSyncPlan plan;
+        string meta;
+        try
+        {
+            meta = System.Text.Encoding.UTF8.GetString(vfs.ReadContent(vfs.Find(Core.Teams.TeamCatalog.MetaPath)
+                ?? throw new InvalidDataException("The game has no database meta file.")));
+            var game = vfs.ReadContent(vfs.Find(Core.Teams.TeamCatalog.DatabasePath) ?? throw new InvalidDataException("The game has no team database."));
+            save = Blueline.Formats.Tdb.RosterSave.Read(folder);
+            plan = Core.Teams.RosterSync.Plan(game, project.ReadBlob(stored), save, meta);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException)
+        {
+            _services.ReportError("The roster save could not be read", error);
+            return;
+        }
+
+        var pending = plan.Pending;
+        if (plan.ToWrite == 0)
+        {
+            RosterState.Text = plan.Total == 0
+                ? "None of this project's database edits are in tables the roster save holds." + (plan.Skipped.Count > 0 ? " " + string.Join(" ", plan.Skipped) : "")
+                : $"The roster save already has all {plan.Total} of this project's edits.";
+            _services.Notify(RosterState.Text);
+            return;
+        }
+        if (Core.Emulator.ShadInstall.AnyRunning())
+        {
+            _services.ReportError("The game is running", "Close shadPS4 first. The game could write the roster save while Blueline does.");
+            return;
+        }
+
+        var lines = Core.Teams.RosterSync.Describe(plan).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var shown = string.Join("\n", lines.Take(20)) + (lines.Length > 20 ? $"\n...and {lines.Length - 20} more" : "");
+        var overwrites = pending.Count(c => c.Overwrites);
+        var what = plan.WhatIsLeft;
+        var message = $"This writes {what} into {folder}:\n\n{shown}\n\n"
+            + (overwrites > 0 ? $"{overwrites} of the cells replace a value the roster had changed itself.\n\n" : "")
+            + "A copy of the save goes to " + Core.Teams.RosterSync.BackupFolder(emulator.UserFolder) + " first. Anything else in the roster stays as it is.";
+        if (!ConfirmDialog.Ask("Copy edits to the roster save?", message, "Write to roster save"))
+            return;
+
+        try
+        {
+            var backup = Core.Teams.RosterSync.Write(save, plan, meta, Core.Teams.RosterSync.BackupFolder(emulator.UserFolder));
+            RosterState.Text = $"Wrote {what} to {Core.Teams.RosterSync.CustomRoster}. The old save is in {backup}.";
+            _services.Log.Info(RosterState.Text);
+            _services.Notify(RosterState.Text);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException or InvalidOperationException)
+        {
+            _services.ReportError("The roster save was not changed", error);
+        }
     }
 
     private void OnUninstall(object sender, RoutedEventArgs e)

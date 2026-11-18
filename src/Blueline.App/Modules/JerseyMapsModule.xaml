@@ -43,6 +43,18 @@
 
         <Border Style="{StaticResource Card}" Margin="0,0,0,8">
           <StackPanel>
+            <TextBlock Style="{StaticResource Section}" Text="LAYOUT" />
+            <TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,0,0,6"
+                       Text="If this colour sheet was drawn for another brand's jersey, fit it to this one. Stripes and logos stretch to the new cut. NHL 27's rbk kits are drawn for the adidas jersey." />
+            <TextBlock Style="{StaticResource Dim}" Text="Drawn for" Margin="0,0,0,3" />
+            <ComboBox x:Name="FitFromBox" Margin="0,0,0,8" />
+            <Button x:Name="FitButton" Content="Fit to this jersey" Click="OnFit"
+                    ToolTip="Replaces the colour sheet in the project, and the normal map too if the project has one, as one undo step. Make the maps afterwards as usual" />
+          </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource Card}" Margin="0,0,0,8">
+          <StackPanel>
             <TextBlock Style="{StaticResource Section}" Text="RAISED AREAS" />
             <WrapPanel Margin="0,0,0,8">
               <ToggleButton x:Name="FromColourChip" Style="{StaticResource Chip}" Content="From the colours" Margin="0,0,4,0" IsChecked="True" Click="OnSourceChip"

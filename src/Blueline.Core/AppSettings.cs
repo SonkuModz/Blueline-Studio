@@ -27,6 +27,15 @@ public sealed class AppSettings
     /// <summary>Blank jersey maps the user made, by brand and map, such as "adidas_nm". Used as a base in Jersey Maps.</summary>
     public Dictionary<string, string> JerseyBlanks { get; set; } = [];
 
+    /// <summary>The full-ice rink model (a modded rink_ice_nhl.mcd) the user was given. Not shipped with Blueline.</summary>
+    public string? FullIceModelPath { get; set; }
+
+    /// <summary>Where TheFaceoff.net rink pictures are cached. Null means %LOCALAPPDATA%\Blueline\faceoff.</summary>
+    public string? FaceoffCache { get; set; }
+
+    public static string DefaultFaceoffCache =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Blueline", "faceoff");
+
     private static string File_ => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Blueline", "settings.json");
 
     public static AppSettings Load()

@@ -9,6 +9,10 @@ public sealed record TdbField(string ShortName, uint Kind, int BitOffset, int De
     public string? Name { get; set; }
     public string Label => Name ?? ShortName;
 
+    /// <summary>The lowest and highest value the meta allows, when a meta was applied. A low of -1 means all bits set.</summary>
+    public long? RangeLow { get; set; }
+    public long? RangeHigh { get; set; }
+
     /// <summary>Fixed-width inline string; anything else is an integer of Depth bits.</summary>
     public bool IsInlineString => Depth > 32 && Depth % 8 == 0;
 
@@ -240,8 +244,11 @@ public sealed class TdbFile
             foreach (var field in element.Descendants().Where(e => e.Name.LocalName == "field"))
             {
                 var fieldShort = (string?)field.Attribute("shortname");
-                if (fieldShort != null && fields.TryGetValue(fieldShort, out var match))
-                    match.Name = (string?)field.Attribute("name");
+                if (fieldShort == null || !fields.TryGetValue(fieldShort, out var match))
+                    continue;
+                match.Name = (string?)field.Attribute("name");
+                if (long.TryParse((string?)field.Attribute("rangelow"), out var low) && long.TryParse((string?)field.Attribute("rangehigh"), out var high) && high > low)
+                    (match.RangeLow, match.RangeHigh) = (low, high);
             }
         }
     }

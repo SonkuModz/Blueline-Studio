@@ -57,12 +57,12 @@
       <StackPanel>
         <Border Style="{StaticResource Card}" Margin="0,0,0,8">
           <StackPanel>
-            <TextBlock Style="{StaticResource Section}" Text="ADD ANOTHER MOD" />
+            <TextBlock Style="{StaticResource Section}" Text="MERGE ANOTHER MOD" />
             <StackPanel x:Name="MergeStart">
-              <TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,0,0,8" Text="Combines another mod into this project. You see every file first, and the other mod is not changed." />
+              <TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,0,0,8" Text="Merges another project or mod into this one. You see every file first, and the other mod is not changed." />
               <WrapPanel>
-                <Button x:Name="AddFolderButton" Content="Project or folder" Margin="0,0,6,4" Click="OnAddFolder" ToolTip="A Blueline project, or a folder of .big archives" />
-                <Button x:Name="AddArchiveButton" Content=".big file" Margin="0,0,0,4" Click="OnAddArchive" ToolTip="A built mod archive" />
+                <Button x:Name="AddFolderButton" Content="Merge a project or folder" Margin="0,0,6,4" Click="OnAddFolder" ToolTip="A Blueline project, or a folder of .big archives" />
+                <Button x:Name="AddArchiveButton" Content="Merge a .big file" Margin="0,0,0,4" Click="OnAddArchive" ToolTip="A built mod archive" />
               </WrapPanel>
             </StackPanel>
             <StackPanel x:Name="MergeReview" Visibility="Collapsed">
@@ -115,6 +115,17 @@
               <Button x:Name="UninstallButton" Content="Uninstall" Click="OnUninstall" />
             </StackPanel>
             <TextBlock x:Name="InstallState" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0" />
+          </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource Card}" Margin="0,0,0,8">
+          <StackPanel>
+            <TextBlock Style="{StaticResource Section}" Text="ROSTER SAVE" />
+            <TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,0,0,8" Text="With a custom roster active (like the Overtime roster), the game reads teams, arenas and gear from that roster save instead of the database. This copies only the database cells this project changed into RosterCustom0, plus any glove and helmet rows it added; the roster's own changes stay. A copy of the save is kept first." />
+            <StackPanel Orientation="Horizontal">
+              <Button x:Name="RosterSyncButton" Content="Copy edits to roster save" Click="OnRosterSync" />
+            </StackPanel>
+            <TextBlock x:Name="RosterState" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0" />
           </StackPanel>
         </Border>
 

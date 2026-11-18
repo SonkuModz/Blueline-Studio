@@ -30,6 +30,7 @@ public partial class MainWindow : Window
             new TexturesModule(services),
             new TeamsModule(services),
             new JerseyMapsModule(services),
+            new FontMapsModule(services),
             new ModelsModule(services),
             new TextModule(services),
             new DatabaseModule(services),
@@ -88,7 +89,7 @@ public partial class MainWindow : Window
     private static readonly (string? Label, string[] Titles)[] TabGroups =
     [
         ("LIBRARY", ["Assets", "Textures", "Text", "Database", "Audio", "Video"]),
-        ("CREATE", ["Teams", "Jersey Maps", "Models", "Overlays"]),
+        ("CREATE", ["Teams", "Jersey Maps", "Font Maps", "Models", "Overlays"]),
         ("SHIP", ["Build", "Play"]),
         (null, ["Settings"]),
     ];
@@ -104,6 +105,7 @@ public partial class MainWindow : Window
         ["Video"] = "",
         ["Teams"] = "",
         ["Jersey Maps"] = "",
+        ["Font Maps"] = "",
         ["Models"] = "",
         ["Overlays"] = "",
         ["Build"] = "",
@@ -526,6 +528,7 @@ public partial class MainWindow : Window
         });
         Add("ACTION", "New project", "Project", () => NewProjectFlow());
         Add("ACTION", "Open project", "Project", () => OpenProjectFlow());
+        Add("ACTION", "Merge another project into this one", project?.Name, MergeFlow, project != null);
         Add("ACTION", "Close project", project?.Name, () => OnMenuClose(this, new RoutedEventArgs()), project != null);
         Add("ACTION", "Show project folder", project?.Folder, () => OnMenuFolder(this, new RoutedEventArgs()), project != null);
         Add("ACTION", project?.UndoLabel is { } undo ? $"Undo: {undo}" : "Undo", "Project", () => OnUndo(this, new RoutedEventArgs()), project?.CanUndo == true);
@@ -611,7 +614,7 @@ public partial class MainWindow : Window
         MenuStats.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
 
         var visible = has ? Visibility.Visible : Visibility.Collapsed;
-        MenuRule1.Visibility = MenuRule2.Visibility = MenuUndo.Visibility = MenuRedo.Visibility = MenuFolder.Visibility = MenuClose.Visibility = visible;
+        MenuRule1.Visibility = MenuRule2.Visibility = MenuUndo.Visibility = MenuRedo.Visibility = MenuMerge.Visibility = MenuFolder.Visibility = MenuClose.Visibility = visible;
         MenuUndo.Content = project?.UndoLabel is { } undo ? $"Undo: {undo}" : "Undo";
         MenuUndo.IsEnabled = project?.CanUndo == true;
         MenuRedo.Content = project?.RedoLabel is { } redo ? $"Redo: {redo}" : "Redo";
@@ -675,6 +678,24 @@ public partial class MainWindow : Window
     {
         ProjectMenu.IsOpen = false;
         OpenProjectFlow();
+    }
+
+    private void OnMenuMerge(object sender, RoutedEventArgs e)
+    {
+        ProjectMenu.IsOpen = false;
+        MergeFlow();
+    }
+
+    /// <summary>Picks another project or folder of archives and opens the Build page's review of what merging it would add.</summary>
+    private void MergeFlow()
+    {
+        if (_services.Workspace.Project is not { } project)
+            return;
+        if (AppServices.PickFolder($"Choose a Blueline project (or a folder of .big files) to merge into {project.Name}") is not { } folder)
+            return;
+        var build = _modules.OfType<BuildModule>().First();
+        Navigate(build.Title, null);
+        _ = build.CompareMod(folder);
     }
 
     private void OnMenuFolder(object sender, RoutedEventArgs e)

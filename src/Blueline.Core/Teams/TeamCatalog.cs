@@ -153,14 +153,26 @@ public sealed class TeamCatalog
     public IReadOnlyList<string> Leagues => Teams.Select(t => t.League).Distinct(StringComparer.Ordinal)
         .OrderBy(l => l == "NHL" ? 0 : l == "Pro-Am" ? 2 : 1).ThenBy(l => l, StringComparer.Ordinal).ToList();
 
-    public static TeamCatalog Load(Func<string, byte[]?> read, IEnumerable<string> paths)
+    /// <param name="readStock">
+    /// Reads the game without any mod, when there is one to read. Mods rename teams but keep their art id, and the game
+    /// picks a team's uniform files by art id, so a renamed team's file name comes from the stock team with that art id.
+    /// </param>
+    public static TeamCatalog Load(Func<string, byte[]?> read, IEnumerable<string> paths, Func<string, byte[]?>? readStock = null)
     {
         var data = read(DatabasePath) ?? throw new InvalidDataException($"The team database is missing: {DatabasePath}");
+        var meta = read(MetaPath) is { } metaBytes ? Encoding.UTF8.GetString(metaBytes) : null;
         var database = TdbFile.Parse(data);
-        if (read(MetaPath) is { } meta)
-            database.ApplyMeta(Encoding.UTF8.GetString(meta));
+        if (meta != null)
+            database.ApplyMeta(meta);
+        TdbFile? stock = null;
+        if (readStock?.Invoke(DatabasePath) is { } stockData && !stockData.AsSpan().SequenceEqual(data))
+        {
+            stock = TdbFile.Parse(stockData);
+            if (meta != null)
+                stock.ApplyMeta(meta);
+        }
         var list = paths as IReadOnlyCollection<string> ?? paths.ToList();
-        return Build(database, list);
+        return Build(database, list, stock);
     }
 
     public IReadOnlyList<TeamArt> ArtOf(TeamInfo team) =>
@@ -200,7 +212,7 @@ public sealed class TeamCatalog
             yield return "slug:" + team.Slug;
     }
 
-    private static TeamCatalog Build(TdbFile database, IReadOnlyCollection<string> paths)
+    private static TeamCatalog Build(TdbFile database, IReadOnlyCollection<string> paths, TdbFile? stock = null)
     {
         var slugs = new HashSet<string>(StringComparer.Ordinal);
         foreach (var path in paths)
@@ -210,7 +222,9 @@ public sealed class TeamCatalog
                 slugs.Add(match.Groups[1].Value);
         }
 
-        var catalog = new TeamCatalog(ReadTeams(database, slugs));
+        var stockSlugs = stock == null ? null
+            : ReadTeams(stock, slugs).Where(t => t.Slug != null && t.LeagueId != 0).GroupBy(t => t.ArtId).ToDictionary(g => g.Key, g => g.First().Slug!);
+        var catalog = new TeamCatalog(ReadTeams(database, slugs, stockSlugs));
         var longest = slugs.Count == 0 ? 0 : slugs.Max(s => s.Count(c => c == '_') + 1);
         foreach (var path in paths)
             if (Classify(path, slugs, longest) is var (owner, art) && catalog._teamsByOwner.ContainsKey(owner))
@@ -223,7 +237,7 @@ public sealed class TeamCatalog
         return catalog;
     }
 
-    private static List<TeamInfo> ReadTeams(TdbFile database, HashSet<string> slugs)
+    private static List<TeamInfo> ReadTeams(TdbFile database, HashSet<string> slugs, IReadOnlyDictionary<int, string>? stockSlugs = null)
     {
         var table = database.Tables.FirstOrDefault(t => t.Label == "exhibitionteams")
             ?? throw new InvalidDataException("The team database has no exhibitionteams table.");
@@ -247,6 +261,7 @@ public sealed class TeamCatalog
                 LeagueNames.GetValueOrDefault(league, $"League {league}"),
                 league is ProAmLeague or EashlLeague or ThreesLeague ? null
                     : ClubSlugs.TryGetValue(Number(row, "artid"), out var club) && slugs.Contains(club) ? club
+                    : stockSlugs != null && stockSlugs.TryGetValue(Number(row, "artid"), out var stockSlug) ? stockSlug
                     : MatchSlug(name, city, abbr, byNormal),
                 Number(row, "centerline"), arena?.Name, arena?.City, arena?.Capacity ?? 0, arena?.Year ?? 0,
                 [Number(row, "feprimarycolor"), Number(row, "fesecondarycolor"), Number(row, "fetertiarycolor")]));

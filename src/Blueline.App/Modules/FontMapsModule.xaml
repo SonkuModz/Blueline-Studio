@@ -1,0 +1,142 @@
+<UserControl x:Class="Blueline.App.Modules.FontMapsModule"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:Blueline.App.Controls">
+  <Grid Margin="14">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="420" MinWidth="320" />
+      <ColumnDefinition Width="8" />
+      <ColumnDefinition Width="*" MinWidth="360" />
+      <ColumnDefinition Width="12" />
+      <ColumnDefinition Width="292" />
+    </Grid.ColumnDefinitions>
+
+    <controls:AssetBrowser x:Name="Browser" />
+    <GridSplitter Grid.Column="1" />
+
+    <DockPanel Grid.Column="2">
+      <WrapPanel x:Name="Views" DockPanel.Dock="Top" Margin="2,0,0,6">
+        <ToggleButton Style="{StaticResource Chip}" Content="Colour sheet" Margin="0,0,4,4" Click="OnView" Tag="Colour" />
+        <ToggleButton Style="{StaticResource Chip}" Content="Layers" Margin="0,0,10,4" Click="OnView" Tag="Layers"
+                      ToolTip="White is the fill, grey the outline. Both are raised; the fill a step higher" />
+        <ToggleButton Style="{StaticResource Chip}" Content="New normal" Margin="0,0,4,4" Click="OnView" Tag="Normal" IsChecked="True" />
+        <ToggleButton Style="{StaticResource Chip}" Content="New sm" Margin="0,0,10,4" Click="OnView" Tag="Sm" />
+        <ToggleButton Style="{StaticResource Chip}" Content="Current normal" Margin="0,0,4,4" Click="OnView" Tag="GameNormal" />
+        <ToggleButton Style="{StaticResource Chip}" Content="Current sm" Margin="0,0,0,4" Click="OnView" Tag="GameSm" />
+      </WrapPanel>
+      <TextBlock x:Name="ViewNote" DockPanel.Dock="Bottom" Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="2,6,0,0" />
+      <Border Style="{StaticResource Card}" Padding="6">
+        <controls:TexturePreview x:Name="Preview" />
+      </Border>
+    </DockPanel>
+
+    <ScrollViewer Grid.Column="4" VerticalScrollBarVisibility="Auto">
+      <StackPanel>
+        <Border Style="{StaticResource Card}" Margin="0,0,0,8">
+          <StackPanel>
+            <TextBlock Style="{StaticResource Section}" Text="FONT" />
+            <TextBlock x:Name="NameText" FontWeight="SemiBold" TextWrapping="Wrap" Text="None selected" />
+            <TextBlock x:Name="KitText" Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,4,0,0" />
+            <TextBlock x:Name="StateText" Foreground="{DynamicResource AccentBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0" />
+          </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource Card}" Margin="0,0,0,8">
+          <StackPanel>
+            <TextBlock Style="{StaticResource Section}" Text="LAYERS" />
+            <DockPanel Margin="0,0,0,4">
+              <Border x:Name="FillSwatch" DockPanel.Dock="Right" Width="18" Height="18" CornerRadius="3" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" />
+              <TextBlock x:Name="FillText" Style="{StaticResource Dim}" Text="Fill colour" VerticalAlignment="Center" />
+            </DockPanel>
+            <DockPanel>
+              <TextBlock x:Name="ToleranceValue" DockPanel.Dock="Right" Style="{StaticResource Dim}" Width="34" TextAlignment="Right" />
+              <TextBlock Style="{StaticResource Dim}" Text="Fill tolerance" />
+            </DockPanel>
+            <Slider x:Name="ToleranceSlider" Minimum="5" Maximum="120" Value="30" SmallChange="1" LargeChange="10" ValueChanged="OnOption"
+                    ToolTip="How far a colour may be from the fill colour and still count as fill. The rest of each letter is outline" />
+            <DockPanel Margin="0,6,0,0">
+              <TextBlock x:Name="StepValue" DockPanel.Dock="Right" Style="{StaticResource Dim}" Width="34" TextAlignment="Right" />
+              <TextBlock Style="{StaticResource Dim}" Text="Fill above outline" />
+            </DockPanel>
+            <Slider x:Name="StepSlider" Minimum="0" Maximum="1" Value="0.5" SmallChange="0.05" LargeChange="0.1" ValueChanged="OnOption"
+                    ToolTip="How far the fill stands above the outline, like layered tackle twill. 0 makes one flat layer" />
+          </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource Card}" Margin="0,0,0,8">
+          <StackPanel>
+            <TextBlock Style="{StaticResource Section}" Text="NORMAL MAP (_nm)" />
+            <DockPanel>
+              <TextBlock x:Name="DepthValue" DockPanel.Dock="Right" Style="{StaticResource Dim}" Width="34" TextAlignment="Right" />
+              <TextBlock Style="{StaticResource Dim}" Text="Depth" />
+            </DockPanel>
+            <Slider x:Name="DepthSlider" Minimum="0" Maximum="3" Value="1" SmallChange="0.05" LargeChange="0.25" ValueChanged="OnOption"
+                    ToolTip="1 is about as deep as the game's own numbers" />
+            <DockPanel Margin="0,6,0,0">
+              <TextBlock x:Name="BevelValue" DockPanel.Dock="Right" Style="{StaticResource Dim}" Width="34" TextAlignment="Right" />
+              <TextBlock Style="{StaticResource Dim}" Text="Rounding" />
+            </DockPanel>
+            <Slider x:Name="BevelSlider" Minimum="1" Maximum="24" Value="10" SmallChange="1" LargeChange="2" ValueChanged="OnOption"
+                    ToolTip="How far the rounded edge reaches into each letter, in pixels at 1024 wide. The game's fit 10" />
+            <DockPanel Margin="0,6,0,0">
+              <TextBlock x:Name="GrainValue" DockPanel.Dock="Right" Style="{StaticResource Dim}" Width="34" TextAlignment="Right" />
+              <TextBlock Style="{StaticResource Dim}" Text="Cloth grain" />
+            </DockPanel>
+            <Slider x:Name="GrainSlider" Minimum="0" Maximum="1" Value="0.25" SmallChange="0.05" LargeChange="0.1" ValueChanged="OnOption"
+                    ToolTip="Fine texture on the letters, in both maps, so they read as cloth" />
+            <CheckBox x:Name="StitchBox" Content="Stitched edges" IsChecked="True" Margin="0,8,0,0" Click="OnOption"
+                      ToolTip="A beaded stitch just inside every layer's edge, the way the game's numbers are sewn on" />
+          </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource Card}" Margin="0,0,0,8">
+          <StackPanel>
+            <TextBlock Style="{StaticResource Section}" Text="SM MAP (_sm)" />
+            <DockPanel>
+              <TextBlock x:Name="FillGreyValue" DockPanel.Dock="Right" Style="{StaticResource Dim}" Width="34" TextAlignment="Right" />
+              <TextBlock Style="{StaticResource Dim}" Text="Fill grey" />
+            </DockPanel>
+            <Slider x:Name="FillGreySlider" Minimum="0" Maximum="120" Value="30" SmallChange="1" LargeChange="5" ValueChanged="OnOption"
+                    ToolTip="The game's fills are 24 to 32, most often 30" />
+            <DockPanel Margin="0,6,0,0">
+              <TextBlock x:Name="OutlineGreyValue" DockPanel.Dock="Right" Style="{StaticResource Dim}" Width="34" TextAlignment="Right" />
+              <TextBlock Style="{StaticResource Dim}" Text="Outline grey" />
+            </DockPanel>
+            <Slider x:Name="OutlineGreySlider" Minimum="0" Maximum="120" Value="24" SmallChange="1" LargeChange="5" ValueChanged="OnOption"
+                    ToolTip="The game's outlines are 20 to 32, most often 24" />
+            <CheckBox x:Name="BottomBox" Content="Own grey for the bottom row" IsChecked="True" Margin="0,8,0,4" Click="OnOption"
+                      ToolTip="Most of the game's fonts give the bottom row of small numbers its own, brighter grey" />
+            <DockPanel>
+              <TextBlock x:Name="BottomGreyValue" DockPanel.Dock="Right" Style="{StaticResource Dim}" Width="34" TextAlignment="Right" />
+              <TextBlock Style="{StaticResource Dim}" Text="Bottom row grey" />
+            </DockPanel>
+            <Slider x:Name="BottomGreySlider" Minimum="0" Maximum="120" Value="50" SmallChange="1" LargeChange="5" ValueChanged="OnOption"
+                    ToolTip="Most of the game's fonts use 50 here" />
+          </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource Card}" Margin="0,0,0,8">
+          <StackPanel>
+            <TextBlock Style="{StaticResource Section}" Text="SAVE" />
+            <TextBlock Style="{StaticResource Dim}" Text="Quality" Margin="0,0,0,3" />
+            <ComboBox x:Name="QualityBox" Margin="0,0,0,8" />
+            <Button x:Name="ApplyButton" Content="Use these maps" Style="{StaticResource Primary}" Margin="0,0,0,6" Click="OnApply"
+                    ToolTip="Puts both maps in the project as one undo step, in the game's own size and format" />
+            <Button x:Name="AllButton" Content="Make maps for all edited fonts" Margin="0,0,0,6" Click="OnAll"
+                    ToolTip="Makes the normal and sm maps, with these options, for every font colour sheet this project changes" />
+            <Button x:Name="ExportButton" Content="Export PNGs" Margin="0,0,0,6" Click="OnExport" />
+            <Button x:Name="RevertButton" Content="Revert maps" Click="OnRevert" />
+          </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource Card}">
+          <StackPanel>
+            <TextBlock Style="{StaticResource Section}" Text="LIMITS" />
+            <TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap"
+                       Text="Made like the game's own font maps, measured on 120 of them, but not yet seen in game. The colour sheet's transparency marks the letters. The fill is the most common colour on the letters; anything else on them is outline. What the sm map does in the game's lighting is not known." />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+    </ScrollViewer>
+  </Grid>
+</UserControl>

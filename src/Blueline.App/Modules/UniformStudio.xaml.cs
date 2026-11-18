@@ -219,26 +219,28 @@ public partial class UniformStudio : UserControl
         var team = _team;
         var gearTeam = team != null ? GearColours.GearTeamOf(team) : null;
         var live = _panel.Team == team ? _panel.Gear : null;
+        var sheets = _kits;
         GearKit? gearKit = null;
         Dictionary<GearPart, int[]?>? zones = null;
         if (live != null && team != null)
         {
             gearKit = live.KitFor(team, kit);
-            zones = Enum.GetValues<GearPart>().ToDictionary(p => p, p => gearKit != null && gearTeam is { } t ? live.Resolve(t, gearKit, p).Row?.Zones.ToArray() : null);
+            zones = Enum.GetValues<GearPart>().ToDictionary(p => p, p => live.PreviewZones(team, kit, p));
         }
         var cached = new Dictionary<string, PieceMaps>(_maps);
         byte[]? Read(string path) => workspace.ReadCurrent(path);
 
         Task.Run(() =>
         {
-            if (zones == null && team != null && gearTeam is { } t && Read(TeamCatalog.DatabasePath) is { } data)
+            if (zones == null && team != null && gearTeam != null && Read(TeamCatalog.DatabasePath) is { } data)
             {
                 var file = TdbFile.Parse((byte[])data.Clone());
                 if (Read(TeamCatalog.MetaPath) is { } meta)
                     file.ApplyMeta(System.Text.Encoding.UTF8.GetString(meta));
                 var gear = GearColours.Open(file);
+                gear.UseSheets(team, sheets);
                 gearKit = gear.KitFor(team, kit);
-                zones = Enum.GetValues<GearPart>().ToDictionary(p => p, p => gearKit != null ? gear.Resolve(t, gearKit, p).Row?.Zones.ToArray() : null);
+                zones = Enum.GetValues<GearPart>().ToDictionary(p => p, p => gear.PreviewZones(team, kit, p));
             }
             zones ??= [];
 
@@ -333,10 +335,13 @@ public partial class UniformStudio : UserControl
             notes.Add($"The game has no {string.Join(" or ", missing)} sheet for this kit, so they are grey");
         if (_team != null && GearColours.GearTeamOf(_team) == null)
             notes.Add("This team is not linked to the gear table, so the gloves and helmet are grey");
+        else if (_gearKit == null && kit.Brand == "adidas")
+            notes.Add("This kit is not in the team's jersey list, so the gloves and helmet show the fallback rows, which the game uses for any kit without its own"
+                      + (Enum.GetValues<GearPart>().Any(p => _loadedZones.GetValueOrDefault(p) == null) ? " (a part with no fallback row is grey)" : "")
+                      + ". To edit them, pick a kit that uses the fallback in the editor"
+                      + (_panel.Kit is { } shown ? $". The editor shows {shown.Label}; its rows are not on this player" : ""));
         else if (_gearKit == null)
-            notes.Add(kit.Brand == "adidas"
-                ? "No gear row is linked to this kit, so the gloves and helmet are grey"
-                : "Older (Reebok and Nineties) kits have no linked gear rows, so the gloves and helmet are grey");
+            notes.Add("Older (Reebok and Nineties) kits have no linked gear rows, so the gloves and helmet are grey");
         else
         {
             var grey = Enum.GetValues<GearPart>().Where(p => _loadedZones.GetValueOrDefault(p) == null).Select(p => p.ToString().ToLowerInvariant()).ToList();
@@ -441,7 +446,7 @@ public partial class UniformStudio : UserControl
     private int[]? ZonesNow(GearPart part)
     {
         if (_panel.Team == _team && _panel.Gear is { } gear && _team != null && GearColours.GearTeamOf(_team) is { } gearTeam && _kit != null)
-            return gear.KitFor(_team, _kit) is { } kit ? gear.Resolve(gearTeam, kit, part).Row?.Zones.ToArray() : null;
+            return gear.PreviewZones(_team, _kit, part);
         return _loadedZones.GetValueOrDefault(part);
     }
 

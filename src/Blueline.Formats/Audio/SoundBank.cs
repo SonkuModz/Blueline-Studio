@@ -14,6 +14,7 @@ public sealed record SoundSample(int Index, long Offset, int Length, byte[] Head
         0x3 => "EA-XMA",
         0x5 => "EALayer3",
         0x9 => "EASpeex",
+        0xB => "EA-MP3",
         0xC => "EAOpus",
         0xD => "EA-ATRAC9",
         0xE => "MultiStreamOpus",

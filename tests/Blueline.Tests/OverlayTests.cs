@@ -184,7 +184,9 @@ public sealed class OverlayTests
         Assert.IsTrue(SportsnetBug.IsApplied(document));
         var after = document.All().Select(w => w.Name).ToHashSet();
         Assert.IsTrue(before.IsSubsetOf(after), "no node of the stock layout was removed or renamed");
-        Assert.AreEqual(SportsnetBug.Scale, JsonEdit.Number(WidgetOf(document, "scoreClock").Node["scaleX"])!.Value, 0.005, "stored with two decimals");
+        // Seen in game: scale on the scoreClock group is ignored, so it goes on the root.
+        Assert.AreEqual(SportsnetBug.Scale, JsonEdit.Number(document.Root.Node["scaleX"])!.Value, 0.005, "stored with two decimals");
+        Assert.IsNull(WidgetOf(document, "scoreClock").Node["scaleX"]);
 
         // Whole bug width at real size: tile + panels + clock cell, about the 440 pixels measured on the broadcast.
         var placed = new LayoutPlacer(SizeOf, _ => null, Screen()).Place(document);
@@ -194,7 +196,7 @@ public sealed class OverlayTests
         Assert.AreEqual(436, width, 8, "about 440 pixels wide at 1920 by 1080");
         Assert.AreEqual(84, tile.Height * tile.ScaleY, 1, "84 pixels high");
         Assert.AreEqual(tile.Width * tile.ScaleX, tile.Height * tile.ScaleY, 0.01, "the logo tile is square");
-        Assert.AreEqual(SportsnetBug.ScreenX, tile.X, 0.01);
+        Assert.AreEqual(SportsnetBug.ScreenX, tile.X, 0.5, "the stored place is rounded, and the scale stored with two decimals");
     }
 
     [TestMethod]

@@ -8,7 +8,8 @@ public sealed record EbWriteItem(string Path, Func<byte[]> Content);
 
 /// <summary>
 /// Writes a complete new EB archive in the shape the NHL 19 databigs use: flags 0x00110400, 20-byte
-/// hashed rows sorted by path hash, 16-byte aligned data, file length a multiple of 16.
+/// hashed rows sorted by path hash, then one zero byte per file, then the names, 16-byte aligned data,
+/// file length a multiple of 16.
 /// Writes to a temporary file and moves it into place, so a failure never leaves a partial archive.
 /// </summary>
 public static class EbWriter
@@ -37,7 +38,10 @@ public static class EbWriter
         }
         sorted.Sort((a, b) => a.Hash.CompareTo(b.Hash));
 
-        var folders = sorted.Select(s => s.Folder).Distinct(StringComparer.Ordinal).OrderBy(f => f, StringComparer.Ordinal).ToList();
+        // Folders go in the order their files first come when all full paths are sorted, as in stock archives (so nhl/ui comes
+        // after nhl/ui/commonfeatures/saveload/saveloadpopup, since "commonfeatures/..." sorts before "definition.overlays").
+        var folders = sorted.Select(s => (s.Folder, Path: s.Item.Path)).OrderBy(s => s.Path, StringComparer.Ordinal)
+            .Select(s => s.Folder).Distinct(StringComparer.Ordinal).ToList();
         var folderIndex = folders.Select((f, i) => (f, i)).ToDictionary(x => x.f, x => x.i, StringComparer.Ordinal);
         if (folders.Count > ushort.MaxValue)
             throw new InvalidDataException("Too many folders for one archive.");
@@ -47,9 +51,13 @@ public static class EbWriter
         if (fileRecord > MaxRecordLength || folderRecord > MaxRecordLength)
             throw new InvalidDataException("A path is too long to fit in the archive's name records.");
 
-        var nameOffset = AlignUp(EbArchive.HeaderSize + sorted.Count * RowSize);
+        // Every stock archive has one byte per file after the rows, always zero, and the game reads it. Without it the
+        // game reads the start of the name table instead: the first two files see the zero folder number and load, the
+        // rest see letters of their names and draw black (seen in game on ad boards).
+        var flagTable = EbArchive.FlagTableOffset(sorted.Count, RowSize);
+        var nameOffset = AlignUp(flagTable + sorted.Count);
         var folderStart = AlignUp(sorted.Count * fileRecord);
-        var nameSize = folderStart + folders.Count * folderRecord;
+        var nameSize = AlignUp(folderStart + folders.Count * folderRecord);
         var dataStart = AlignUp(nameOffset + nameSize);
 
         var names = new byte[nameSize];
@@ -68,16 +76,27 @@ public static class EbWriter
         {
             var rows = new byte[sorted.Count * RowSize];
             long length;
-            using (var output = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20))
+            // Files with the same bytes are stored once, as stock archives do (boot.big shares 589 of its 6,886).
+            var stored = new Dictionary<(ulong Hash, int Length), List<long>>();
+            using (var output = new FileStream(temporary, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 1 << 20))
             {
                 output.Position = dataStart;
                 for (var i = 0; i < sorted.Count; i++)
                 {
                     cancel.ThrowIfCancellationRequested();
                     var content = sorted[i].Item.Content();
-                    var offset = output.Position;
-                    output.Write(content);
-                    Pad(output);
+                    var key = (BinaryPrimitives.ReadUInt64LittleEndian(System.Security.Cryptography.SHA256.HashData(content)), content.Length);
+                    long offset = -1;
+                    if (content.Length > 0 && stored.TryGetValue(key, out var candidates))
+                        offset = candidates.FirstOrDefault(at => SameBytes(output, at, content), -1);
+                    if (offset < 0)
+                    {
+                        offset = output.Position;
+                        output.Write(content);
+                        Pad(output);
+                        if (content.Length > 0)
+                            (stored.TryGetValue(key, out var list) ? list : stored[key] = []).Add(offset);
+                    }
 
                     var blocks = offset / Block;
                     if (blocks > uint.MaxValue)
@@ -108,6 +127,7 @@ public static class EbWriter
                 output.Position = 0;
                 output.Write(header);
                 output.Write(rows);
+                output.Write(new byte[nameOffset - (int)output.Position]);
                 output.Position = nameOffset;
                 output.Write(names);
             }
@@ -127,6 +147,16 @@ public static class EbWriter
         if (path.Any(c => c > 0x7E || c < 0x20))
             throw new InvalidDataException($"Path contains characters the archive tables cannot hold: '{path}'");
         return path;
+    }
+
+    private static bool SameBytes(FileStream output, long at, byte[] content)
+    {
+        var here = output.Position;
+        var existing = new byte[content.Length];
+        output.Flush();
+        RandomAccess.Read(output.SafeFileHandle, existing, at);
+        output.Position = here;
+        return existing.AsSpan().SequenceEqual(content);
     }
 
     private static int AlignUp(int value) => (value + Block - 1) & ~(Block - 1);
