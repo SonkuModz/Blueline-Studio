@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.12.1
+
+### Mod packs
+- Packs can now be up to **10 GB** unpacked (was 4 GB), so large mods like a full jersey and rink overhaul (about 6 GB) export and install. Free disk space is still checked before an install
+- A pack that fails to export no longer leaves its half-written `.writing` file behind
+- Export page: the roster list shows when each save was last written and picks the newest by default. It no longer labels RosterCustom0 as Puck Peak's, since your own edits may be in it
+
 ## 0.12.0
 
 Beta, same test setup as 0.11.0 (NHL 19 CUSA11126 1.60 under shadPS4). A big release: mod packs, a full roster editor, uniform slots and a new look.

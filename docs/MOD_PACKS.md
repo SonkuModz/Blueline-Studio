@@ -49,7 +49,7 @@ manager:
 
 - refuses any entry outside these names, and any name with `..`, a drive letter or a leading slash;
 - checks that every `files/` blob hashes to its name before use;
-- refuses a pack that unpacks to more than 4 GB, or any entry over 1 MB that unpacks to more than 1,000 times its packed size,
+- refuses a pack that unpacks to more than 10 GB (free disk space is checked at install), or any entry over 1 MB that unpacks to more than 1,000 times its packed size,
   which guards against zip bombs.
 
 ### 2.1 `manifest.json`

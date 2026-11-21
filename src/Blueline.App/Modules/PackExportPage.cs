@@ -117,7 +117,7 @@ public sealed class PackExportPage : UserControl
         var rosterText = new StackPanel();
         rosterText.Children.Add(new TextBlock { Text = "Include a roster save", FontWeight = FontWeights.SemiBold });
         rosterText.Children.Add(_rosterSlot);
-        rosterText.Children.Add(Dim("On the player's game it goes into a free custom slot, never Puck Peak's RosterCustom0. The account id in the save is blanked.").Also(t => t.Margin = new Thickness(0, 6, 0, 0)));
+        rosterText.Children.Add(Dim("On the player's game it goes into a free custom slot, never over their RosterCustom0. The account id in the save is blanked.").Also(t => t.Margin = new Thickness(0, 6, 0, 0)));
         var rosterRow = new DockPanel();
         DockPanel.SetDock(_includeRoster, Dock.Left);
         rosterRow.Children.Add(_includeRoster);
@@ -196,16 +196,20 @@ public sealed class PackExportPage : UserControl
         var saveData = SaveData();
         var slots = saveData == null ? [] : RosterSlots.List(saveData);
         foreach (var slot in slots)
-            _rosterSlot.Items.Add(new ComboBoxItem { Content = $"{slot.Name} · “{slot.Title}”{(slot.Name == RosterSlots.Reserved ? " (Puck Peak's)" : "")}", Tag = slot.Folder });
+            _rosterSlot.Items.Add(new ComboBoxItem { Content = $"{slot.Name} · “{slot.Title}”  (saved {Saved(slot.Folder):yyyy-MM-dd HH:mm})", Tag = slot.Folder });
         var hasDatabase = _project.TryGet(Core.Teams.TeamCatalog.DatabasePath, out _);
-        // Your own custom roster by default, not Puck Peak's RosterCustom0.
-        _rosterSlot.SelectedIndex = slots.Count == 0 ? -1 : Math.Max(0, slots.ToList().FindIndex(s => s.Name != RosterSlots.Reserved));
+        // The most recently saved roster by default: that is the one Blueline's roster sync and the game last wrote.
+        var list = slots.ToList();
+        _rosterSlot.SelectedIndex = list.Count == 0 ? -1 : list.IndexOf(list.MaxBy(s => Saved(s.Folder))!);
         _includeRoster.IsEnabled = slots.Count > 0;
         _includeRoster.IsChecked = slots.Count > 0 && hasDatabase;
         _rosterSlot.IsEnabled = _includeRoster.IsChecked == true;
         if (saveData == null)
             _rosterSlot.Items.Add(new ComboBoxItem { Content = "Choose shadPS4 in Settings to list the roster saves", IsEnabled = false });
     }
+
+    private static DateTime Saved(string folder) =>
+        File.Exists(Path.Combine(folder, "DATA")) ? File.GetLastWriteTime(Path.Combine(folder, "DATA")) : DateTime.MinValue;
 
     private string? RosterFolder => _includeRoster.IsChecked == true ? (_rosterSlot.SelectedItem as ComboBoxItem)?.Tag as string : null;
 

@@ -38,7 +38,8 @@ public static partial class ModPack
 {
     public const int Format = 1;
     public const string Extension = ".blpack";
-    public const long MaxUnpacked = 4L << 30;
+    /// <summary>A sanity cap against a broken or hostile pack, well above real mods (the Overhaul project is about 6 GB). Free disk space is checked separately at install.</summary>
+    public const long MaxUnpacked = 10L << 30;
     public const string RosterFolder = "saves/roster";
 
     public static readonly (int Width, int Height) CoverSize = (1280, 720);
@@ -94,7 +95,7 @@ public static partial class ModPack
             total += entry.Length;
         }
         if (total > MaxUnpacked)
-            throw new PackFormatException("The pack unpacks to more than 4 GB, so it was refused.");
+            throw new PackFormatException($"The pack unpacks to more than {MaxUnpacked >> 30} GB, so it was refused.");
 
         var manifestEntry = zip.GetEntry("manifest.json") ?? throw new PackFormatException("The file has no manifest.json, so it is not a Blueline mod pack.");
         PackManifest manifest;
@@ -212,6 +213,23 @@ public static partial class ModPack
         var temporary = destination + ".writing";
         if (File.Exists(temporary))
             File.Delete(temporary);
+        try
+        {
+            WriteAndCheck(temporary, manifest, blob, art, saveFiles, progress);
+        }
+        catch
+        {
+            // A failed or refused pack can be gigabytes; don't leave it behind.
+            try { File.Delete(temporary); } catch (IOException) { }
+            throw;
+        }
+        File.Move(temporary, destination, overwrite: true);
+    }
+
+    private static void WriteAndCheck(string temporary, PackManifest manifest, Func<string, byte[]> blob,
+        IReadOnlyDictionary<string, byte[]> art, IReadOnlyDictionary<string, byte[]> saveFiles,
+        IProgress<(string Stage, int Done, int Total)>? progress)
+    {
         using (var zip = ZipFile.Open(temporary, ZipArchiveMode.Create))
         {
             void Add(string name, byte[] content, CompressionLevel level)
@@ -240,7 +258,6 @@ public static partial class ModPack
                 if (Sha256(ReadAll(zip.GetEntry("files/" + file.Blob)!)) != file.Blob)
                     throw new PackFormatException($"{file.Path} read back different from what was packed.");
         }
-        File.Move(temporary, destination, overwrite: true);
     }
 
     internal static byte[] ReadAll(ZipArchiveEntry entry)
