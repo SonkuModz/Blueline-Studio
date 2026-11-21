@@ -18,6 +18,13 @@ if ($LASTEXITCODE -ne 0) { throw 'cli publish failed' }
 Copy-Item "$root\README.md", "$root\CHANGELOG.md", "$root\docs\USER_GUIDE.md" $out
 if (Test-Path "$root\LICENSE") { Copy-Item "$root\LICENSE" $out }
 
+# The DLSS emulator build program: source patch and script only, never the built emulator or NVIDIA's files.
+$dlss = Join-Path $out 'dlss-emulator'
+New-Item -ItemType Directory -Path $dlss | Out-Null
+$tool = Join-Path $root 'tools\dlss-emulator'
+Copy-Item (Join-Path $tool 'Build-DlssEmulator.ps1'), (Join-Path $tool 'Build DLSS Emulator.cmd'), `
+  (Join-Path $tool 'nhl19-dlss.patch'), (Join-Path $tool 'README.md') $dlss
+
 $zip = "$out.zip"
 if (Test-Path $zip) { Remove-Item $zip }
 Compress-Archive -Path "$out\*" -DestinationPath $zip

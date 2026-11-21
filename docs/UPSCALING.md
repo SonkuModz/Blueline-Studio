@@ -244,3 +244,12 @@ the exe holds the key and `nvngx_dlss.dll` is beside it. A key the file lacks re
 the file being edited, normally `custom_configs\CUSA11126.json`. An Overtime Roster update to boost\ would bring the
 stock exe back, and the switch would then disappear.
 
+
+## 9. Build program for other players
+
+`tools/dlss-emulator` (the `dlss-emulator` folder in the release zip) rebuilds this emulator on any PC. It holds `nhl19-dlss.patch` (the
+fork's changes against Kravickas NHL19-Build `b23fb67`, GPL-2.0) and `Build-DlssEmulator.ps1`. The program fetches that commit
+and its submodules, applies the patch, shows NVIDIA's RTX SDK licence and asks for "yes", downloads the DLSS SDK v310.9.16 files
+from github.com/NVIDIA/DLSS (SHA-256 checked against the files this build was made with), and builds with Visual Studio's
+clang-cl, CMake and Ninja. Blueline ships no NVIDIA files, and a built emulator should not be passed on, since it contains
+NVIDIA code linked into a GPL program.

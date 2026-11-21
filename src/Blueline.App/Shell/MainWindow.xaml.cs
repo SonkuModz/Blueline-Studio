@@ -425,7 +425,7 @@ public partial class MainWindow : Window
         Func<Task> after = options.CaptureFolder != null
             ? () => new CaptureTour(this, options.CaptureLaunch).RunAsync(options.CaptureFolder)
             : () => Task.CompletedTask;
-        _ = game != null ? home.MountAsync(game, after) : after();
+        _ = game != null ? home.MountAsync(game, after, remember: options.Game == null) : after();
     }
 
     public void Navigate(string title, string? path)

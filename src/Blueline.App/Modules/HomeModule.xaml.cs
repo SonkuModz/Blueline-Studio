@@ -24,7 +24,9 @@ public sealed class HomeModule : IEditorModule
     public void OpenPath(string path) { }
 
     /// <summary>Mounts the game in the background; <paramref name="after"/> runs once it is ready, even if it failed.</summary>
-    public async Task MountAsync(string folder, Func<Task>? after = null)
+    /// <param name="remember">False for a folder given on the command line (such as a sandbox for the screenshot tour), so it is used
+    /// for this session only and the folder chosen in Settings stays.</param>
+    public async Task MountAsync(string folder, Func<Task>? after = null, bool remember = true)
     {
         await _services.Jobs.RunAsync("Mounting the game", context =>
         {
@@ -34,8 +36,11 @@ public sealed class HomeModule : IEditorModule
         }, result =>
         {
             _services.SetGame(result.vfs, result.Item2);
-            _services.Settings.GameFolder = result.vfs.Install.Root;
-            _services.Settings.Save();
+            if (remember)
+            {
+                _services.Settings.GameFolder = result.vfs.Install.Root;
+                _services.Settings.Save();
+            }
             _view.Refresh();
         });
         if (after != null)

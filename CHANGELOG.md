@@ -33,7 +33,8 @@ Beta, same test setup as 0.11.0 (NHL 19 CUSA11126 1.60 under shadPS4). A big rel
 - CLI `franchise-info`, `franchise-repack`, `franchise-sync` (team names, AHL affiliates, arenas into a Franchise save) and `franchise-immersion` (2025-26 arenas and real insiders for a project). New franchises pick up 2025-26 affiliates and arenas from the roster save. A repacked existing Franchise save has not been loaded in game
 
 ### DLSS
-- Play tab: a **DLSS (DLAA)** switch when the emulator is the DLSS build (docs/UPSCALING.md). That build is separate and not included. At 1080p it runs as DLAA, NVIDIA's anti-aliasing, for about 1.5 ms a frame
+- Play tab: a **DLSS (DLAA)** switch when the emulator is the DLSS build (docs/UPSCALING.md). At 1080p it runs as DLAA, NVIDIA's anti-aliasing, for about 1.5 ms a frame
+- **DLSS emulator build program** (`dlss-emulator` folder in the zip, `tools/dlss-emulator` in the repo): builds the DLSS emulator on your own PC. It downloads the shadPS4 source, applies Blueline's DLSS patch (GPL-2.0 source, included), asks you to accept NVIDIA's licence, downloads the DLSS SDK files from NVIDIA's GitHub (hash-checked) and compiles it. No NVIDIA files are shipped. Needs Git and Visual Studio 2022 Build Tools with the C++, Clang and CMake parts
 
 ### Interface
 - Slim left rail instead of the top tab bar, and an Ice colour palette

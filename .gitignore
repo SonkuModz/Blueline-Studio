@@ -8,3 +8,7 @@ obj/
 *.user
 docs/screenshots/tour*/
 release/
+
+# DLSS build program output
+tools/dlss-emulator/work/
+tools/dlss-emulator/shadPS4-dlss/

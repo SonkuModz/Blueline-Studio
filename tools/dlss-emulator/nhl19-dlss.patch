@@ -1,0 +1,3962 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 1ddb551..948cc0d 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1046,6 +1046,7 @@ set(SHADER_RECOMPILER src/shader_recompiler/profile.h
+                       src/shader_recompiler/params.h
+                       src/shader_recompiler/runtime_info.h
+                       src/shader_recompiler/specialization.h
++                      src/shader_recompiler/xfb_layout.h
+                       src/shader_recompiler/backend/bindings.h
+                       src/shader_recompiler/backend/spirv/emit_spirv.cpp
+                       src/shader_recompiler/backend/spirv/emit_spirv.h
+@@ -1227,6 +1228,10 @@ set(VIDEO_CORE src/video_core/amdgpu/cb_db_extent.h
+                src/video_core/renderer_vulkan/host_passes/fsr_pass.h
+                src/video_core/renderer_vulkan/host_passes/pp_pass.cpp
+                src/video_core/renderer_vulkan/host_passes/pp_pass.h
++               src/video_core/renderer_vulkan/host_passes/dlss_pass.cpp
++               src/video_core/renderer_vulkan/host_passes/dlss_pass.h
++               src/video_core/renderer_vulkan/host_passes/xfb_velocity_pass.cpp
++               src/video_core/renderer_vulkan/host_passes/xfb_velocity_pass.h
+                src/video_core/texture_cache/blit_helper.cpp
+                src/video_core/texture_cache/blit_helper.h
+                src/video_core/texture_cache/host_compatibility.cpp
+@@ -1250,6 +1255,8 @@ set(VIDEO_CORE src/video_core/amdgpu/cb_db_extent.h
+                src/video_core/page_manager.h
+                src/video_core/renderdoc.cpp
+                src/video_core/renderdoc.h
++               src/video_core/xfb_capture.cpp
++               src/video_core/xfb_capture.h
+ )
+ 
+ set(IMGUI src/imgui/imgui_config.h
+@@ -1351,6 +1358,20 @@ add_executable(shadps4
+     src/sdl_window.cpp
+ )
+ 
++
++# NVIDIA DLSS through the public NGX SDK (github.com/NVIDIA/DLSS). Point DLSS_SDK_DIR at a folder
++# holding include/, lib/nvsdk_ngx_d.lib and bin/nvngx_dlss.dll; the DLL is copied beside the exe.
++set(DLSS_SDK_DIR "" CACHE PATH "NVIDIA DLSS SDK folder (include, lib, bin)")
++if (WIN32 AND DLSS_SDK_DIR AND EXISTS "${DLSS_SDK_DIR}/include/nvsdk_ngx_vk.h")
++    message(STATUS "DLSS: using NGX SDK at ${DLSS_SDK_DIR}")
++    target_compile_definitions(shadps4 PRIVATE SHADPS4_ENABLE_DLSS)
++    target_include_directories(shadps4 PRIVATE "${DLSS_SDK_DIR}/include")
++    target_link_libraries(shadps4 PRIVATE "${DLSS_SDK_DIR}/lib/nvsdk_ngx_d.lib")
++    add_custom_command(TARGET shadps4 POST_BUILD
++        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${DLSS_SDK_DIR}/bin/nvngx_dlss.dll"
++                $<TARGET_FILE_DIR:shadps4>)
++endif()
++
+ create_target_directory_groups(shadps4)
+ 
+ target_link_libraries(shadps4 PRIVATE spdlog::spdlog)
+diff --git a/src/core/address_space.cpp b/src/core/address_space.cpp
+index 10b0bc3..f55da2b 100644
+--- a/src/core/address_space.cpp
++++ b/src/core/address_space.cpp
+@@ -55,6 +55,11 @@ constexpr VAddr USER_MAX = 0xFFFFFFFFFFFULL;
+ constexpr VAddr USER_MAX = 0x5FFFFFFFFFFFULL;
+ #endif
+ 
++// With DLSS on (Windows), user mappings stop here; see the Impl constructor. NHL 19 maps fixed
++// pages counting down from 0xFBFFFFC000, so keep everything below 0xFC00000000 (plus one 64 KB
++// granule, since user_size stops one byte short of the max).
++[[maybe_unused]] constexpr VAddr DlssUserMax = 0xFC00010000ULL;
++
+ // Constants for the sizes of the ranges in address space.
+ static constexpr u64 SystemManagedSize = SYSTEM_MANAGED_MAX - SYSTEM_MANAGED_MIN + 1;
+ static constexpr u64 SystemReservedSize = SYSTEM_RESERVED_MAX - SYSTEM_RESERVED_MIN + 1;
+@@ -146,6 +151,15 @@ struct AddressSpace::Impl {
+             }
+         }
+ 
++        // DLSS goes through CUDA (VK_NVX_binary_import), and the driver needs a free block of a
++        // few GB below the 40-bit line to start it. Reserving everything up to 1 TB makes device
++        // creation fail, so leave the top ~16 GB of that range to the driver when DLSS is on.
++        if (EmulatorSettings.IsDlssEnabled() && supported_user_max > DlssUserMax) {
++            supported_user_max = DlssUserMax;
++            LOG_INFO(Core, "DLSS: user max reduced to {:#x} to leave room for CUDA",
++                     supported_user_max);
++        }
++
+         // Determine the free address ranges we can access.
+         VAddr next_addr = SYSTEM_MANAGED_MIN;
+         MEMORY_BASIC_INFORMATION info{};
+@@ -203,9 +217,16 @@ struct AddressSpace::Impl {
+ 
+         ASSERT_MSG(backing_handle, "{}", Common::GetLastErrorMsg());
+         // Allocate a virtual memory for the backing file map as placeholder
+-        backing_base = static_cast<u8*>(VirtualAlloc2(process, nullptr, BackingSize,
+-                                                      MEM_RESERVE | MEM_RESERVE_PLACEHOLDER,
+-                                                      PAGE_NOACCESS, nullptr, 0));
++        // With DLSS on, keep it above 1 TB so it does not land in the hole left for CUDA.
++        MEM_ADDRESS_REQUIREMENTS above_hole{};
++        above_hole.LowestStartingAddress = reinterpret_cast<PVOID>(0x10000000000ULL);
++        MEM_EXTENDED_PARAMETER backing_param{};
++        backing_param.Type = MemExtendedParameterAddressRequirements;
++        backing_param.Pointer = &above_hole;
++        const bool backing_above_hole = supported_user_max == DlssUserMax;
++        backing_base = static_cast<u8*>(VirtualAlloc2(
++            process, nullptr, BackingSize, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS,
++            backing_above_hole ? &backing_param : nullptr, backing_above_hole ? 1 : 0));
+         ASSERT_MSG(backing_base, "{}", Common::GetLastErrorMsg());
+ 
+         // Map backing placeholder. This will commit the pages
+diff --git a/src/core/emulator_settings.h b/src/core/emulator_settings.h
+index 118aea0..3024c94 100644
+--- a/src/core/emulator_settings.h
++++ b/src/core/emulator_settings.h
+@@ -435,6 +435,16 @@ struct GPUSettings {
+     Setting<bool> inline_fetch_shader{false};
+     Setting<bool> fast_shader_math{false};
+     Setting<u32> submit_draw_interval{0};
++    // NVIDIA DLSS on the presented frame, with motion vectors from transform feedback.
++    Setting<bool> dlss_enabled{false};
++    // Sub-pixel camera jitter on scene draws; DLSS needs it to resolve detail.
++    Setting<bool> dlss_jitter{true};
++    // 0 off, 1 motion vectors, 2 depth, 3 motion source mask: replaces the presented frame.
++    Setting<u32> dlss_debug_view{0};
++    // NGX DLSS preset hint (0 default, 1 = A ... 15 = O), and quality mode for render scale.
++    Setting<u32> dlss_preset{0};
++    // 1 flips the sign of the jitter offset passed to DLSS, for verifying the convention.
++    Setting<bool> dlss_jitter_flip{false};
+ 
+     std::vector<OverrideItem> GetOverrideableFields() const {
+         return std::vector<OverrideItem>{
+@@ -461,6 +471,11 @@ struct GPUSettings {
+             make_override<GPUSettings>("inline_fetch_shader", &GPUSettings::inline_fetch_shader),
+             make_override<GPUSettings>("fast_shader_math", &GPUSettings::fast_shader_math),
+             make_override<GPUSettings>("submit_draw_interval", &GPUSettings::submit_draw_interval),
++            make_override<GPUSettings>("dlss_enabled", &GPUSettings::dlss_enabled),
++            make_override<GPUSettings>("dlss_jitter", &GPUSettings::dlss_jitter),
++            make_override<GPUSettings>("dlss_debug_view", &GPUSettings::dlss_debug_view),
++            make_override<GPUSettings>("dlss_preset", &GPUSettings::dlss_preset),
++            make_override<GPUSettings>("dlss_jitter_flip", &GPUSettings::dlss_jitter_flip),
+         };
+     }
+ };
+@@ -471,7 +486,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(GPUSettings, window_width, window_height, int
+                                    vblank_frequency, full_screen, full_screen_mode, present_mode,
+                                    hdr_allowed, fsr_enabled, rcas_enabled, rcas_attenuation,
+                                    userfaultfd, inline_fetch_shader, fast_shader_math,
+-                                   submit_draw_interval)
++                                   submit_draw_interval, dlss_enabled, dlss_jitter,
++                                   dlss_debug_view, dlss_preset, dlss_jitter_flip)
+ 
+ // -------------------------------
+ // Vulkan settings
+@@ -772,6 +788,11 @@ public:
+     SETTING_FORWARD_BOOL(m_gpu, FsrEnabled, fsr_enabled)
+     SETTING_FORWARD_BOOL(m_gpu, RcasEnabled, rcas_enabled)
+     SETTING_FORWARD(m_gpu, RcasAttenuation, rcas_attenuation)
++    SETTING_FORWARD_BOOL(m_gpu, DlssEnabled, dlss_enabled)
++    SETTING_FORWARD_BOOL(m_gpu, DlssJitter, dlss_jitter)
++    SETTING_FORWARD(m_gpu, DlssDebugView, dlss_debug_view)
++    SETTING_FORWARD(m_gpu, DlssPreset, dlss_preset)
++    SETTING_FORWARD_BOOL(m_gpu, DlssJitterFlip, dlss_jitter_flip)
+     SETTING_FORWARD(m_gpu, ReadbacksMode, readbacks_mode)
+     SETTING_FORWARD_BOOL(m_gpu, ReadbackLinearImagesEnabled, readback_linear_images_enabled)
+     SETTING_FORWARD_BOOL(m_gpu, DirectMemoryAccessEnabled, direct_memory_access_enabled)
+diff --git a/src/shader_recompiler/backend/spirv/emit_spirv.cpp b/src/shader_recompiler/backend/spirv/emit_spirv.cpp
+index abebb75..9ccdd82 100644
+--- a/src/shader_recompiler/backend/spirv/emit_spirv.cpp
++++ b/src/shader_recompiler/backend/spirv/emit_spirv.cpp
+@@ -405,6 +405,10 @@ void DefineEntryPoint(const Info& info, const RuntimeInfo& runtime_info, EmitCon
+     }
+     case SwStage::Vertex:
+         execution_model = spv::ExecutionModel::Vertex;
++        if (ctx.xfb_capture) {
++            ctx.AddCapability(spv::Capability::TransformFeedback);
++            ctx.AddExecutionMode(main, spv::ExecutionMode::Xfb);
++        }
+         break;
+     case SwStage::TessellationControl:
+         execution_model = spv::ExecutionModel::TessellationControl;
+diff --git a/src/shader_recompiler/backend/spirv/emit_spirv_special.cpp b/src/shader_recompiler/backend/spirv/emit_spirv_special.cpp
+index 4eae5c3..cc628c4 100644
+--- a/src/shader_recompiler/backend/spirv/emit_spirv_special.cpp
++++ b/src/shader_recompiler/backend/spirv/emit_spirv_special.cpp
+@@ -74,6 +74,9 @@ void EmitEpilogue(EmitContext& ctx) {
+     if (ctx.hw_stage == HwStage::Vertex && ctx.runtime_info.hw.vs.clip_disable) {
+         ConvertPositionToClipSpace(ctx);
+     }
++    if (Sirit::ValidId(ctx.xfb_vertex_index)) {
++        ctx.OpStore(ctx.xfb_vertex_index, ctx.OpLoad(ctx.U32[1], ctx.vertex_index));
++    }
+ }
+ 
+ void EmitDiscard(EmitContext& ctx) {
+diff --git a/src/shader_recompiler/backend/spirv/spirv_emit_context.cpp b/src/shader_recompiler/backend/spirv/spirv_emit_context.cpp
+index ececaf8..4a9aeae 100644
+--- a/src/shader_recompiler/backend/spirv/spirv_emit_context.cpp
++++ b/src/shader_recompiler/backend/spirv/spirv_emit_context.cpp
+@@ -8,6 +8,7 @@
+ #include "shader_recompiler/ir/attribute.h"
+ #include "shader_recompiler/ir/microinstruction.h"
+ #include "shader_recompiler/runtime_info.h"
++#include "shader_recompiler/xfb_layout.h"
+ 
+ #include <boost/container/static_vector.hpp>
+ #include <fmt/format.h>
+@@ -591,6 +592,11 @@ void EmitContext::DefineVertexBlock() {
+     const std::array<Id, 8> zero{f32_zero_value, f32_zero_value, f32_zero_value, f32_zero_value,
+                                  f32_zero_value, f32_zero_value, f32_zero_value, f32_zero_value};
+     output_position = DefineVariable(F32[4], spv::BuiltIn::Position, spv::StorageClass::Output);
++    if (xfb_capture) {
++        Decorate(output_position, spv::Decoration::XfbBuffer, 0U);
++        Decorate(output_position, spv::Decoration::XfbStride, XfbVertexStride);
++        Decorate(output_position, spv::Decoration::Offset, 0U);
++    }
+     const bool needs_clip_distance_emulation = sw_stage == SwStage::Vertex &&
+                                                hw_stage == HwStage::Vertex &&
+                                                profile.needs_clip_distance_emulation;
+@@ -623,6 +629,11 @@ void EmitContext::DefineVertexBlock() {
+ void EmitContext::DefineOutputs() {
+     switch (sw_stage) {
+     case SwStage::Vertex: {
++        u32 xfb_location = 0;
++        if (XfbCaptureEnabled(info, profile, runtime_info.sw.vs.tess_emulated_primitive)) {
++            xfb_capture = true;
++            xfb_location = *XfbVertexIndexLocation(info, profile);
++        }
+         DefineVertexBlock();
+         if (hw_stage == Shader::HwStage::Local) {
+             const u32 num_attrs = Common::AlignUp(runtime_info.hw.ls.ls_stride, 16) >> 4;
+@@ -656,6 +667,14 @@ void EmitContext::DefineOutputs() {
+                     AmdGpu::NumberFormat::Float, clip_distances, MaxEmulatedClipDistances, true);
+                 Name(clip_distances, fmt::format("cldist_attr{}", 0));
+             }
++            if (xfb_capture) {
++                xfb_vertex_index = DefineOutput(U32[1], xfb_location);
++                Decorate(xfb_vertex_index, spv::Decoration::Flat);
++                Decorate(xfb_vertex_index, spv::Decoration::XfbBuffer, 0U);
++                Decorate(xfb_vertex_index, spv::Decoration::XfbStride, XfbVertexStride);
++                Decorate(xfb_vertex_index, spv::Decoration::Offset, XfbVertexIndexOffset);
++                Name(xfb_vertex_index, "xfb_vertex_index");
++            }
+         }
+         break;
+     }
+diff --git a/src/shader_recompiler/backend/spirv/spirv_emit_context.h b/src/shader_recompiler/backend/spirv/spirv_emit_context.h
+index ef2589f..2833cab 100644
+--- a/src/shader_recompiler/backend/spirv/spirv_emit_context.h
++++ b/src/shader_recompiler/backend/spirv/spirv_emit_context.h
+@@ -246,6 +246,8 @@ public:
+     boost::container::small_vector<Id, 16> interfaces;
+ 
+     Id output_position{};
++    Id xfb_vertex_index{};
++    bool xfb_capture{};
+     Id output_point_size{};
+     Id output_layer{};
+     Id output_viewport_index{};
+diff --git a/src/shader_recompiler/profile.h b/src/shader_recompiler/profile.h
+index 4f903ef..6b36675 100644
+--- a/src/shader_recompiler/profile.h
++++ b/src/shader_recompiler/profile.h
+@@ -55,6 +55,7 @@ struct Profile {
+     bool supports_shader_stencil_export{};
+     bool fast_shader_math{};
+     bool support_bda{};
++    bool supports_transform_feedback{};
+ 
+     bool operator==(const Profile&) const = default;
+ };
+diff --git a/src/shader_recompiler/xfb_layout.h b/src/shader_recompiler/xfb_layout.h
+new file mode 100644
+index 0000000..a726718
+--- /dev/null
++++ b/src/shader_recompiler/xfb_layout.h
+@@ -0,0 +1,46 @@
++// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#pragma once
++
++#include <algorithm>
++#include <optional>
++#include "common/types.h"
++#include "shader_recompiler/info.h"
++#include "shader_recompiler/ir/attribute.h"
++#include "shader_recompiler/profile.h"
++
++namespace Shader {
++
++// Transform feedback record written by the last pre-rasterization stage: float4 clip position
++// followed by the vertex index.
++constexpr u32 XfbVertexStride = 20;
++constexpr u32 XfbVertexIndexOffset = 16;
++
++// Output location for the vertex index, or nullopt when every vertex output location is in use.
++inline std::optional<u32> XfbVertexIndexLocation(const Info& info, const Profile& profile) {
++    const u32 shift =
++        profile.needs_clip_distance_emulation && info.stores.GetAny(IR::Attribute::ClipDistance)
++            ? 1
++            : 0;
++    u32 location = shift;
++    for (u32 i = 0; i < IR::NumParams; i++) {
++        if (info.stores.GetAny(IR::Attribute::Param0 + i)) {
++            location = std::max(location, i + shift + 1);
++        }
++    }
++    if (location >= IR::NumParams) {
++        return std::nullopt;
++    }
++    return location;
++}
++
++// True when this shader is the last pre-rasterization stage and is compiled with Xfb outputs.
++// Both the SPIR-V backend and the rasterizer must agree on this.
++inline bool XfbCaptureEnabled(const Info& info, const Profile& profile, bool tess_emulated) {
++    return profile.supports_transform_feedback && info.hw_stage == HwStage::Vertex &&
++           info.sw_stage == SwStage::Vertex && !tess_emulated &&
++           XfbVertexIndexLocation(info, profile).has_value();
++}
++
++} // namespace Shader
+diff --git a/src/video_core/host_shaders/CMakeLists.txt b/src/video_core/host_shaders/CMakeLists.txt
+index 1f4d3bc..76683ce 100644
+--- a/src/video_core/host_shaders/CMakeLists.txt
++++ b/src/video_core/host_shaders/CMakeLists.txt
+@@ -46,6 +46,15 @@ add_host_shader(fs_tri.vert fs_tri_vert)
+ add_host_shader(fsr.comp fsr_easu_comp SAMPLE_EASU=1)
+ add_host_shader(fsr.comp fsr_rcas_comp SAMPLE_RCAS=1)
+ add_host_shader(post_process.frag post_process_frag)
++add_host_shader(xfb_camera_hypotheses.comp xfb_camera_hypotheses_comp)
++add_host_shader(xfb_camera_solve.comp xfb_camera_solve_comp)
++add_host_shader(xfb_camera_sums.comp xfb_camera_sums_comp)
++add_host_shader(xfb_velocity.frag xfb_velocity_frag)
++add_host_shader(xfb_velocity.vert xfb_velocity_vert)
++add_host_shader(dlss_debug.comp dlss_debug_comp)
++add_host_shader(xfb_velocity_resolve.comp xfb_velocity_resolve_comp)
++add_host_shader(xfb_depth_copy.comp xfb_depth_copy_comp)
++add_host_shader(xfb_depth_copy_ms.comp xfb_depth_copy_ms_comp)
+ 
+ foreach(BPP IN ITEMS 8 16 32 64 96 128)
+     add_host_shader(tiling.comp tiling_micro_${BPP}_comp BITS_PER_PIXEL=${BPP} IS_MACRO_TILED=0)
+diff --git a/src/video_core/host_shaders/dlss_debug.comp b/src/video_core/host_shaders/dlss_debug.comp
+new file mode 100644
+index 0000000..4176b4e
+--- /dev/null
++++ b/src/video_core/host_shaders/dlss_debug.comp
+@@ -0,0 +1,35 @@
++// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#version 450
++#extension GL_EXT_samplerless_texture_functions : require
++
++layout(local_size_x = 8, local_size_y = 8) in;
++
++layout(set = 0, binding = 0) uniform texture2D motion_tex;
++layout(set = 0, binding = 1) uniform texture2D depth_tex;
++layout(set = 0, binding = 2, rgba8) uniform writeonly image2D out_image;
++
++layout(push_constant) uniform Constants {
++    uint mode;
++} pc;
++
++// Mode 1: motion in pixels, red right / green down, 8 px to full; blue where zero.
++// Mode 2: depth, stretched so the ice and boards are readable.
++void main() {
++    const ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
++    if (any(greaterThanEqual(coord, imageSize(out_image)))) {
++        return;
++    }
++    vec4 color = vec4(0.0, 0.0, 0.0, 1.0);
++    if (pc.mode == 1u) {
++        const vec2 mv = texelFetch(motion_tex, coord, 0).xy;
++        color.rg = clamp(vec2(0.5) + mv / 16.0, 0.0, 1.0);
++        color.b = dot(mv, mv) < 1e-6 ? 0.6 : 0.0;
++    } else {
++        const float d = texelFetch(depth_tex, coord, 0).x;
++        const float v = clamp(pow(clamp(d, 0.0, 1.0), 32.0), 0.0, 1.0);
++        color.rgb = vec3(v);
++    }
++    imageStore(out_image, coord, color);
++}
+diff --git a/src/video_core/host_shaders/xfb_camera_common.glsl b/src/video_core/host_shaders/xfb_camera_common.glsl
+new file mode 100644
+index 0000000..70dc19d
+--- /dev/null
++++ b/src/video_core/host_shaders/xfb_camera_common.glsl
+@@ -0,0 +1,107 @@
++// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++// Shared by the camera solve shaders. The including shader declares `double sums[]` in the
++// layout written by xfb_camera_sums.comp.
++
++const uint RegionStride = 32u;
++const uint NormalCount = 26u;
++// Static geometry measures near 1e-10; moving and skinned geometry is orders of magnitude above.
++const double InlierResidual = 1e-5LF;
++const double PivotEpsilon = 1e-12LF;
++const uint UpperStart[4] = uint[](0u, 4u, 7u, 9u);
++
++double Sum(uint region, uint slot) {
++    return sums[region * RegionStride + slot];
++}
++
++double Trace(uint region) {
++    return Sum(region, 0u) + Sum(region, 4u) + Sum(region, 7u) + Sum(region, 9u);
++}
++
++bool Usable(uint region) {
++    return Sum(region, 27u) > 0.0LF && Trace(region) > 0.0LF;
++}
++
++double Upper(uint region, uint i, uint j) {
++    const uint lo = min(i, j);
++    const uint hi = max(i, j);
++    return Sum(region, UpperStart[lo] + (hi - lo));
++}
++
++// sum |p - C c|^2 relative to sum |c|^2.
++double RelativeResidual(uint region, dvec4 c[4]) {
++    double r = Sum(region, 26u);
++    for (uint row = 0u; row < 4u; ++row) {
++        for (uint i = 0u; i < 4u; ++i) {
++            r -= 2.0LF * c[row][i] * Sum(region, 10u + row * 4u + i);
++            for (uint j = 0u; j < 4u; ++j) {
++                r += c[row][i] * Upper(region, i, j) * c[row][j];
++            }
++        }
++    }
++    return max(r, 0.0LF) / Trace(region);
++}
++
++// Unit trace per region, so dense meshes do not outweigh large surfaces.
++void Accumulate(uint region, inout double normal[NormalCount]) {
++    const double inv_trace = 1.0LF / Trace(region);
++    for (uint k = 0u; k < NormalCount; ++k) {
++        normal[k] += Sum(region, k) * inv_trace;
++    }
++}
++
++// Gauss-Jordan with partial pivoting on [A | B^T]; column r of the solution is row r of C.
++bool SolveNormal(double normal[NormalCount], out dvec4 c[4]) {
++    double m[4][8];
++    double scale = 0.0LF;
++    for (uint i = 0u; i < 4u; ++i) {
++        for (uint j = 0u; j < 4u; ++j) {
++            const uint lo = min(i, j);
++            const uint hi = max(i, j);
++            m[i][j] = normal[UpperStart[lo] + (hi - lo)];
++        }
++        for (uint r = 0u; r < 4u; ++r) {
++            m[i][4u + r] = normal[10u + r * 4u + i];
++        }
++        scale = max(scale, abs(m[i][i]));
++    }
++    for (uint r = 0u; r < 4u; ++r) {
++        c[r] = dvec4(0.0LF);
++        c[r][r] = 1.0LF;
++    }
++    if (scale <= 0.0LF) {
++        return false;
++    }
++    for (uint col = 0u; col < 4u; ++col) {
++        uint pivot = col;
++        double best = abs(m[col][col]);
++        for (uint row = col + 1u; row < 4u; ++row) {
++            if (abs(m[row][col]) > best) {
++                best = abs(m[row][col]);
++                pivot = row;
++            }
++        }
++        if (best <= PivotEpsilon * scale) {
++            return false;
++        }
++        for (uint k = 0u; k < 8u; ++k) {
++            const double t = m[col][k];
++            m[col][k] = m[pivot][k];
++            m[pivot][k] = t;
++        }
++        for (uint row = 0u; row < 4u; ++row) {
++            if (row != col) {
++                const double f = m[row][col] / m[col][col];
++                for (uint k = 0u; k < 8u; ++k) {
++                    m[row][k] -= f * m[col][k];
++                }
++            }
++        }
++    }
++    for (uint r = 0u; r < 4u; ++r) {
++        c[r] = dvec4(m[0][4u + r] / m[0][0], m[1][4u + r] / m[1][1], m[2][4u + r] / m[2][2],
++                     m[3][4u + r] / m[3][3]);
++    }
++    return true;
++}
+diff --git a/src/video_core/host_shaders/xfb_camera_hypotheses.comp b/src/video_core/host_shaders/xfb_camera_hypotheses.comp
+new file mode 100644
+index 0000000..a9d3024
+--- /dev/null
++++ b/src/video_core/host_shaders/xfb_camera_hypotheses.comp
+@@ -0,0 +1,98 @@
++// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#version 450
++#extension GL_GOOGLE_include_directive : require
++
++// One workgroup per hypothesis: fit C to a random sample of regions, count the regions it
++// explains. The static world is the largest set that agrees on one C.
++layout(local_size_x = 64) in;
++
++layout(set = 0, binding = 0, std430) readonly buffer Sums {
++    double sums[];
++};
++// Per hypothesis: C rows (16), inlier count, 3 unused.
++layout(set = 0, binding = 1, std430) writeonly buffer Hypotheses {
++    double hypotheses[];
++};
++
++layout(push_constant) uniform Constants {
++    uint region_count;
++} pc;
++
++#include "xfb_camera_common.glsl"
++
++const uint Threads = 64u;
++const uint SampleSize = 6u;
++const uint MaxTries = 64u;
++const uint HypothesisStride = 20u;
++
++shared dvec4 candidate[4];
++shared bool candidate_valid;
++shared uint inliers;
++
++uint Hash(uint v) {
++    const uint state = v * 747796405u + 2891336453u;
++    const uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
++    return (word >> 22u) ^ word;
++}
++
++void main() {
++    const uint hypothesis = gl_WorkGroupID.x;
++    const uint lane = gl_LocalInvocationID.x;
++
++    if (lane == 0u) {
++        uint picked[SampleSize];
++        uint count = 0u;
++        for (uint attempt = 0u; attempt < MaxTries && count < SampleSize; ++attempt) {
++            const uint region = Hash(hypothesis * MaxTries + attempt) % max(pc.region_count, 1u);
++            if (!Usable(region)) {
++                continue;
++            }
++            bool duplicate = false;
++            for (uint k = 0u; k < count; ++k) {
++                duplicate = duplicate || picked[k] == region;
++            }
++            if (!duplicate) {
++                picked[count++] = region;
++            }
++        }
++        double normal[NormalCount];
++        for (uint k = 0u; k < NormalCount; ++k) {
++            normal[k] = 0.0LF;
++        }
++        for (uint k = 0u; k < count; ++k) {
++            Accumulate(picked[k], normal);
++        }
++        dvec4 c[4];
++        const bool solved = SolveNormal(normal, c);
++        candidate_valid = count == SampleSize && solved;
++        for (uint r = 0u; r < 4u; ++r) {
++            candidate[r] = c[r];
++        }
++        inliers = 0u;
++    }
++    barrier();
++
++    if (candidate_valid) {
++        const dvec4 c[4] = dvec4[](candidate[0], candidate[1], candidate[2], candidate[3]);
++        uint local_inliers = 0u;
++        for (uint i = lane; i < pc.region_count; i += Threads) {
++            if (Usable(i) && RelativeResidual(i, c) < InlierResidual) {
++                ++local_inliers;
++            }
++        }
++        atomicAdd(inliers, local_inliers);
++    }
++    barrier();
++
++    if (lane == 0u) {
++        const uint base = hypothesis * HypothesisStride;
++        for (uint r = 0u; r < 4u; ++r) {
++            for (uint k = 0u; k < 4u; ++k) {
++                hypotheses[base + r * 4u + k] = candidate[r][k];
++            }
++        }
++        hypotheses[base + 16u] = candidate_valid ? double(inliers) : 0.0LF;
++    }
++}
+diff --git a/src/video_core/host_shaders/xfb_camera_solve.comp b/src/video_core/host_shaders/xfb_camera_solve.comp
+new file mode 100644
+index 0000000..5e8989b
+--- /dev/null
++++ b/src/video_core/host_shaders/xfb_camera_solve.comp
+@@ -0,0 +1,141 @@
++// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#version 450
++#extension GL_GOOGLE_include_directive : require
++
++// Takes the hypothesis with the most inliers and refits C to all of its inliers. Doubles because
++// clip z and w are nearly collinear.
++layout(local_size_x = 64) in;
++
++layout(set = 0, binding = 0, std430) readonly buffer Sums {
++    double sums[];
++};
++layout(set = 0, binding = 1, std430) readonly buffer Hypotheses {
++    double hypotheses[];
++};
++layout(set = 0, binding = 2, std430) writeonly buffer Camera {
++    vec4 clip_to_prev[4];
++    vec4 stats;
++} camera;
++
++layout(push_constant) uniform Constants {
++    uint region_count;
++    uint hypothesis_count;
++} pc;
++
++#include "xfb_camera_common.glsl"
++
++const uint Threads = 64u;
++const uint Refinements = 2u;
++const uint MinInliers = 8u;
++const uint HypothesisStride = 20u;
++
++shared double reduce_normal[Threads][NormalCount];
++shared dvec2 reduce_pair[Threads];
++shared dvec4 solution[4];
++shared bool solution_valid;
++
++void main() {
++    const uint lane = gl_LocalInvocationID.x;
++
++    // (inlier count, hypothesis index) of the best hypothesis.
++    dvec2 best = dvec2(0.0LF);
++    for (uint h = lane; h < pc.hypothesis_count; h += Threads) {
++        const double count = hypotheses[h * HypothesisStride + 16u];
++        if (count > best.x) {
++            best = dvec2(count, double(h));
++        }
++    }
++    reduce_pair[lane] = best;
++    barrier();
++    for (uint stride = Threads / 2u; stride > 0u; stride >>= 1u) {
++        if (lane < stride && reduce_pair[lane + stride].x > reduce_pair[lane].x) {
++            reduce_pair[lane] = reduce_pair[lane + stride];
++        }
++        barrier();
++    }
++    if (lane == 0u) {
++        const uint base = uint(reduce_pair[0].y) * HypothesisStride;
++        for (uint r = 0u; r < 4u; ++r) {
++            solution[r] = dvec4(hypotheses[base + r * 4u + 0u], hypotheses[base + r * 4u + 1u],
++                                hypotheses[base + r * 4u + 2u], hypotheses[base + r * 4u + 3u]);
++        }
++        solution_valid = reduce_pair[0].x >= double(MinInliers);
++    }
++    barrier();
++
++    for (uint refinement = 0u; refinement < Refinements; ++refinement) {
++        if (!solution_valid) {
++            break;
++        }
++        const dvec4 c[4] = dvec4[](solution[0], solution[1], solution[2], solution[3]);
++        double acc[NormalCount];
++        for (uint k = 0u; k < NormalCount; ++k) {
++            acc[k] = 0.0LF;
++        }
++        for (uint i = lane; i < pc.region_count; i += Threads) {
++            if (Usable(i) && RelativeResidual(i, c) < InlierResidual) {
++                Accumulate(i, acc);
++            }
++        }
++        for (uint k = 0u; k < NormalCount; ++k) {
++            reduce_normal[lane][k] = acc[k];
++        }
++        barrier();
++        for (uint stride = Threads / 2u; stride > 0u; stride >>= 1u) {
++            if (lane < stride) {
++                for (uint k = 0u; k < NormalCount; ++k) {
++                    reduce_normal[lane][k] += reduce_normal[lane + stride][k];
++                }
++            }
++            barrier();
++        }
++        if (lane == 0u) {
++            double normal[NormalCount];
++            for (uint k = 0u; k < NormalCount; ++k) {
++                normal[k] = reduce_normal[0][k];
++            }
++            dvec4 refined[4];
++            if (SolveNormal(normal, refined)) {
++                for (uint r = 0u; r < 4u; ++r) {
++                    solution[r] = refined[r];
++                }
++            }
++        }
++        barrier();
++    }
++
++    const dvec4 c[4] = dvec4[](solution[0], solution[1], solution[2], solution[3]);
++    dvec2 residual = dvec2(0.0LF);
++    if (solution_valid) {
++        for (uint i = lane; i < pc.region_count; i += Threads) {
++            if (!Usable(i)) {
++                continue;
++            }
++            const double r = RelativeResidual(i, c);
++            if (r < InlierResidual) {
++                residual += dvec2(r, 1.0LF);
++            }
++        }
++    }
++    reduce_pair[lane] = residual;
++    barrier();
++    for (uint stride = Threads / 2u; stride > 0u; stride >>= 1u) {
++        if (lane < stride) {
++            reduce_pair[lane] += reduce_pair[lane + stride];
++        }
++        barrier();
++    }
++
++    if (lane == 0u) {
++        const double inliers = reduce_pair[0].y;
++        const bool valid = solution_valid && inliers >= double(MinInliers);
++        for (uint r = 0u; r < 4u; ++r) {
++            camera.clip_to_prev[r] = vec4(solution[r]);
++        }
++        camera.stats = vec4(valid ? 1.0 : 0.0, float(inliers),
++                            float(reduce_pair[0].x / max(inliers, 1.0LF)),
++                            float(pc.region_count));
++    }
++}
+diff --git a/src/video_core/host_shaders/xfb_camera_sums.comp b/src/video_core/host_shaders/xfb_camera_sums.comp
+new file mode 100644
+index 0000000..10ee8ea
+--- /dev/null
++++ b/src/video_core/host_shaders/xfb_camera_sums.comp
+@@ -0,0 +1,109 @@
++// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#version 450
++
++layout(local_size_x = 64) in;
++
++// Mirrors XfbVelocityPass::RegionEntry.
++struct Region {
++    uint cur_offset;
++    uint prev_offset;
++    uint prev_max_vertices;
++    uint has_prev;
++    vec2 viewport_size;
++    vec2 viewport_offset;
++    vec2 depth_range;
++    uint blended;
++    uint negative_one_to_one;
++    uint counter_offset;
++    uint pad0;
++    uint pad1;
++    uint pad2;
++};
++
++layout(set = 0, binding = 0, std430) readonly buffer CurCapture {
++    uint cur_data[];
++};
++layout(set = 0, binding = 1, std430) readonly buffer PrevCapture {
++    uint prev_data[];
++};
++layout(set = 0, binding = 2, std430) readonly buffer Counters {
++    uint counters[];
++};
++layout(set = 0, binding = 3, std430) readonly buffer Regions {
++    Region regions[];
++};
++// Per region: sum(c c^T) upper (10), sum(p c^T) rows (16), sum(|p|^2), count, 4 unused.
++layout(set = 0, binding = 4, std430) writeonly buffer Sums {
++    double sums[];
++};
++
++const uint MaxSamples = 512u;
++const uint SumCount = 28u;
++const uint RegionStride = 32u;
++
++shared double partial[64][SumCount];
++
++void main() {
++    const uint region_index = gl_WorkGroupID.x;
++    const uint lane = gl_LocalInvocationID.x;
++    const Region region = regions[region_index];
++
++    double acc[SumCount];
++    for (uint i = 0u; i < SumCount; ++i) {
++        acc[i] = 0.0LF;
++    }
++    if (region.has_prev != 0u && region.blended == 0u) {
++        const uint count =
++            min(counters[region.counter_offset / 4u] / 20u, region.prev_max_vertices);
++        const uint step = max(1u, count / MaxSamples);
++        for (uint v = lane * step; v < count; v += 64u * step) {
++            const uint cur_base = region.cur_offset + v * 5u;
++            const uint prev_base = region.prev_offset + v * 5u;
++            if (cur_data[cur_base + 4u] != prev_data[prev_base + 4u]) {
++                continue;
++            }
++            const dvec4 c = dvec4(uintBitsToFloat(cur_data[cur_base + 0u]),
++                                  uintBitsToFloat(cur_data[cur_base + 1u]),
++                                  uintBitsToFloat(cur_data[cur_base + 2u]),
++                                  uintBitsToFloat(cur_data[cur_base + 3u]));
++            const dvec4 p = dvec4(uintBitsToFloat(prev_data[prev_base + 0u]),
++                                  uintBitsToFloat(prev_data[prev_base + 1u]),
++                                  uintBitsToFloat(prev_data[prev_base + 2u]),
++                                  uintBitsToFloat(prev_data[prev_base + 3u]));
++            if (c.w <= 0.0 || p.w <= 0.0) {
++                continue;
++            }
++            uint k = 0u;
++            for (uint i = 0u; i < 4u; ++i) {
++                for (uint j = i; j < 4u; ++j) {
++                    acc[k++] += c[i] * c[j];
++                }
++            }
++            for (uint r = 0u; r < 4u; ++r) {
++                for (uint j = 0u; j < 4u; ++j) {
++                    acc[10u + r * 4u + j] += p[r] * c[j];
++                }
++            }
++            acc[26] += dot(p, p);
++            acc[27] += 1.0LF;
++        }
++    }
++
++    for (uint i = 0u; i < SumCount; ++i) {
++        partial[lane][i] = acc[i];
++    }
++    barrier();
++    for (uint stride = 32u; stride > 0u; stride >>= 1u) {
++        if (lane < stride) {
++            for (uint i = 0u; i < SumCount; ++i) {
++                partial[lane][i] += partial[lane + stride][i];
++            }
++        }
++        barrier();
++    }
++    if (lane < RegionStride) {
++        sums[region_index * RegionStride + lane] = lane < SumCount ? partial[0][lane] : 0.0LF;
++    }
++}
+diff --git a/src/video_core/host_shaders/xfb_depth_copy.comp b/src/video_core/host_shaders/xfb_depth_copy.comp
+new file mode 100644
+index 0000000..8673e8e
+--- /dev/null
++++ b/src/video_core/host_shaders/xfb_depth_copy.comp
+@@ -0,0 +1,19 @@
++// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#version 450
++#extension GL_EXT_samplerless_texture_functions : require
++
++// Scene depth -> single-sample R32F for consumers that cannot take a depth attachment.
++layout(local_size_x = 8, local_size_y = 8) in;
++
++layout(set = 0, binding = 0) uniform texture2D depth;
++layout(set = 0, binding = 1, r32f) uniform writeonly image2D depth_out;
++
++void main() {
++    const ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
++    if (any(greaterThanEqual(coord, imageSize(depth_out)))) {
++        return;
++    }
++    imageStore(depth_out, coord, vec4(texelFetch(depth, coord, 0).r));
++}
+diff --git a/src/video_core/host_shaders/xfb_depth_copy_ms.comp b/src/video_core/host_shaders/xfb_depth_copy_ms.comp
+new file mode 100644
+index 0000000..78e9c49
+--- /dev/null
++++ b/src/video_core/host_shaders/xfb_depth_copy_ms.comp
+@@ -0,0 +1,19 @@
++// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#version 450
++#extension GL_EXT_samplerless_texture_functions : require
++
++// Multisampled scene depth -> sample 0 as single-sample R32F, matching the motion resolve.
++layout(local_size_x = 8, local_size_y = 8) in;
++
++layout(set = 0, binding = 0) uniform texture2DMS depth;
++layout(set = 0, binding = 1, r32f) uniform writeonly image2D depth_out;
++
++void main() {
++    const ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
++    if (any(greaterThanEqual(coord, imageSize(depth_out)))) {
++        return;
++    }
++    imageStore(depth_out, coord, vec4(texelFetch(depth, coord, 0).r));
++}
+diff --git a/src/video_core/host_shaders/xfb_velocity.frag b/src/video_core/host_shaders/xfb_velocity.frag
+new file mode 100644
+index 0000000..33c82c0
+--- /dev/null
++++ b/src/video_core/host_shaders/xfb_velocity.frag
+@@ -0,0 +1,71 @@
++// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#version 450
++
++layout (push_constant) uniform Constants {
++    uint cur_offset;
++    uint prev_offset;
++    uint prev_max_vertices;
++    uint has_prev;
++    vec2 viewport_size;
++    vec2 viewport_offset;
++    vec2 depth_range;
++    uint blended;
++    uint negative_one_to_one;
++} pc;
++
++// Clip to previous clip transform of static geometry, solved by xfb_camera_solve.comp.
++layout(set = 0, binding = 2, std430) readonly buffer Camera {
++    vec4 clip_to_prev[4];
++    vec4 stats;
++} camera;
++
++layout(location = 0) in vec4 in_cur;
++layout(location = 1) in vec4 in_prev;
++layout(location = 2) in float in_invalid;
++
++// Motion vector in pixels from the current pixel to its previous-frame position.
++layout(location = 0) out vec2 out_motion;
++// 0 per-vertex motion, 0.25 camera reprojection, 0.5 untrusted, 1 (clear) not covered.
++layout(location = 1) out float out_mask;
++
++// The fragment passed an EQUAL test, so gl_FragCoord.z is the stored scene depth.
++bool CameraMotion(out vec2 motion) {
++    motion = vec2(0.0);
++    const bool centered = pc.negative_one_to_one != 0u;
++    const float depth_scale = (pc.depth_range.y - pc.depth_range.x) * (centered ? 0.5 : 1.0);
++    if (camera.stats.x == 0.0 || depth_scale == 0.0) {
++        return false;
++    }
++    const float depth_offset =
++        centered ? 0.5 * (pc.depth_range.x + pc.depth_range.y) : pc.depth_range.x;
++    const vec2 center = pc.viewport_offset + 0.5 * pc.viewport_size;
++    const vec2 ndc = (gl_FragCoord.xy - center) * 2.0 / pc.viewport_size;
++    const vec4 cur = vec4(ndc, (gl_FragCoord.z - depth_offset) / depth_scale, 1.0);
++    const vec4 prev = vec4(dot(camera.clip_to_prev[0], cur), dot(camera.clip_to_prev[1], cur),
++                           dot(camera.clip_to_prev[2], cur), dot(camera.clip_to_prev[3], cur));
++    if (prev.w <= 0.0) {
++        return false;
++    }
++    motion = (prev.xy / prev.w - ndc) * 0.5 * pc.viewport_size;
++    return true;
++}
++
++void main() {
++    if (in_invalid > 0.0 || in_prev.w <= 0.0) {
++        vec2 motion;
++        if (pc.blended == 0u && CameraMotion(motion)) {
++            out_motion = motion;
++            out_mask = 0.25;
++        } else {
++            out_motion = vec2(0.0);
++            out_mask = 0.5;
++        }
++        return;
++    }
++    const vec2 cur_ndc = in_cur.xy / in_cur.w;
++    const vec2 prev_ndc = in_prev.xy / in_prev.w;
++    out_motion = (prev_ndc - cur_ndc) * 0.5 * pc.viewport_size;
++    out_mask = 0.0;
++}
+diff --git a/src/video_core/host_shaders/xfb_velocity.vert b/src/video_core/host_shaders/xfb_velocity.vert
+new file mode 100644
+index 0000000..bab0ed9
+--- /dev/null
++++ b/src/video_core/host_shaders/xfb_velocity.vert
+@@ -0,0 +1,51 @@
++// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#version 450
++
++// Transform feedback records are 5 dwords: float4 clip position, uint vertex index.
++layout(set = 0, binding = 0, std430) readonly buffer CurCapture {
++    uint cur_data[];
++};
++layout(set = 0, binding = 1, std430) readonly buffer PrevCapture {
++    uint prev_data[];
++};
++
++layout (push_constant) uniform Constants {
++    uint cur_offset;
++    uint prev_offset;
++    uint prev_max_vertices;
++    uint has_prev;
++    vec2 viewport_size;
++    vec2 viewport_offset;
++    vec2 depth_range;
++    uint blended;
++    uint negative_one_to_one;
++} pc;
++
++layout(location = 0) out vec4 out_cur;
++layout(location = 1) out vec4 out_prev;
++layout(location = 2) out float out_invalid;
++
++void main() {
++    const uint slot = uint(gl_VertexIndex);
++    const uint cur_base = pc.cur_offset + slot * 5u;
++    const vec4 cur =
++        vec4(uintBitsToFloat(cur_data[cur_base + 0u]), uintBitsToFloat(cur_data[cur_base + 1u]),
++             uintBitsToFloat(cur_data[cur_base + 2u]), uintBitsToFloat(cur_data[cur_base + 3u]));
++
++    vec4 prev = cur;
++    bool valid = pc.has_prev != 0u && slot < pc.prev_max_vertices;
++    if (valid) {
++        const uint prev_base = pc.prev_offset + slot * 5u;
++        prev = vec4(
++            uintBitsToFloat(prev_data[prev_base + 0u]), uintBitsToFloat(prev_data[prev_base + 1u]),
++            uintBitsToFloat(prev_data[prev_base + 2u]), uintBitsToFloat(prev_data[prev_base + 3u]));
++        valid = prev_data[prev_base + 4u] == cur_data[cur_base + 4u];
++    }
++
++    gl_Position = cur;
++    out_cur = cur;
++    out_prev = prev;
++    out_invalid = valid ? 0.0 : 1.0;
++}
+diff --git a/src/video_core/host_shaders/xfb_velocity_resolve.comp b/src/video_core/host_shaders/xfb_velocity_resolve.comp
+new file mode 100644
+index 0000000..bdd56bd
+--- /dev/null
++++ b/src/video_core/host_shaders/xfb_velocity_resolve.comp
+@@ -0,0 +1,22 @@
++// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#version 450
++#extension GL_EXT_samplerless_texture_functions : require
++
++layout(local_size_x = 8, local_size_y = 8) in;
++
++layout(set = 0, binding = 0) uniform texture2DMS motion_ms;
++layout(set = 0, binding = 1) uniform texture2DMS mask_ms;
++layout(set = 0, binding = 2, rg16f) uniform writeonly image2D motion_out;
++layout(set = 0, binding = 3, r8) uniform writeonly image2D mask_out;
++
++// Sample 0, not an average: blending vectors of two surfaces at an edge yields motion neither has.
++void main() {
++    const ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
++    if (any(greaterThanEqual(coord, imageSize(motion_out)))) {
++        return;
++    }
++    imageStore(motion_out, coord, texelFetch(motion_ms, coord, 0));
++    imageStore(mask_out, coord, texelFetch(mask_ms, coord, 0));
++}
+diff --git a/src/video_core/renderer_vulkan/host_passes/dlss_pass.cpp b/src/video_core/renderer_vulkan/host_passes/dlss_pass.cpp
+new file mode 100644
+index 0000000..95483d3
+--- /dev/null
++++ b/src/video_core/renderer_vulkan/host_passes/dlss_pass.cpp
+@@ -0,0 +1,556 @@
++// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#include "video_core/renderer_vulkan/host_passes/dlss_pass.h"
++
++#include <array>
++#include <chrono>
++#include <string>
++#include "common/assert.h"
++#include "common/logging/log.h"
++#include "common/path_util.h"
++#include "core/emulator_settings.h"
++#include "video_core/host_shaders/dlss_debug_comp.h"
++#include "video_core/renderer_vulkan/vk_instance.h"
++#include "video_core/renderer_vulkan/vk_platform.h"
++#include "video_core/renderer_vulkan/vk_shader_util.h"
++#include "video_core/texture_cache/image.h"
++
++#ifdef SHADPS4_ENABLE_DLSS
++#include <nvsdk_ngx_helpers_vk.h>
++#include <nvsdk_ngx_vk.h>
++#endif
++
++namespace Vulkan::HostPasses {
++
++namespace {
++
++constexpr vk::Format OutputFormat = vk::Format::eR8G8B8A8Unorm;
++
++constexpr vk::ImageSubresourceRange ColorRange{
++    .aspectMask = vk::ImageAspectFlagBits::eColor,
++    .baseMipLevel = 0,
++    .levelCount = 1,
++    .baseArrayLayer = 0,
++    .layerCount = 1,
++};
++
++#ifdef SHADPS4_ENABLE_DLSS
++// Identifies this integration to NGX as a custom-engine project (no NVIDIA application ID).
++constexpr const char* NgxProjectId = "7a45e79b-1023-43e0-9e62-91eede364c5e";
++
++bool NgxOk(NVSDK_NGX_Result result) {
++    return NVSDK_NGX_SUCCEED(result);
++}
++#endif
++
++} // Anonymous namespace
++
++struct DlssPass::Impl {
++    const Instance& instance;
++    vk::Device device;
++
++    VideoCore::UniqueImage output;
++    vk::UniqueImageView storage_view;
++    vk::UniqueImageView sampled_view;
++    vk::Format sampled_format{};
++    vk::Extent2D size{};
++    bool output_initialized{};
++
++    vk::ShaderModule debug_module;
++    vk::UniqueDescriptorSetLayout debug_set_layout;
++    vk::UniquePipelineLayout debug_layout;
++    vk::UniquePipeline debug_pipeline;
++
++#ifdef SHADPS4_ENABLE_DLSS
++    bool ngx_tried{};
++    bool ngx_ready{};
++    bool disabled{};
++    NVSDK_NGX_Parameter* parameters{};
++    NVSDK_NGX_Handle* feature{};
++    vk::Extent2D feature_size{};
++    int feature_flags{};
++    u32 feature_preset{};
++    u64 frames{};
++    // GPU time of the NGX evaluate, logged every few hundred frames.
++    vk::UniqueQueryPool timer_pool;
++    double timer_sum_ms{};
++    u32 timer_samples{};
++    std::chrono::steady_clock::time_point timer_start{};
++#endif
++
++    explicit Impl(const Instance& instance_)
++        : instance{instance_}, device{instance_.GetDevice()},
++          output{instance_.GetDevice(), instance_.GetAllocator()} {
++        CreateDebugPipeline();
++    }
++
++    ~Impl() {
++#ifdef SHADPS4_ENABLE_DLSS
++        if (feature) {
++            NVSDK_NGX_VULKAN_ReleaseFeature(feature);
++        }
++        if (parameters) {
++            NVSDK_NGX_VULKAN_DestroyParameters(parameters);
++        }
++        if (ngx_ready) {
++            NVSDK_NGX_VULKAN_Shutdown1(device);
++        }
++#endif
++        if (debug_module) {
++            device.destroyShaderModule(debug_module);
++        }
++    }
++
++    void CreateDebugPipeline() {
++        debug_module = CompileSPV(DLSS_DEBUG_COMP, device);
++        ASSERT(debug_module);
++        const std::array bindings = {
++            vk::DescriptorSetLayoutBinding{
++                .binding = 0,
++                .descriptorType = vk::DescriptorType::eSampledImage,
++                .descriptorCount = 1,
++                .stageFlags = vk::ShaderStageFlagBits::eCompute,
++            },
++            vk::DescriptorSetLayoutBinding{
++                .binding = 1,
++                .descriptorType = vk::DescriptorType::eSampledImage,
++                .descriptorCount = 1,
++                .stageFlags = vk::ShaderStageFlagBits::eCompute,
++            },
++            vk::DescriptorSetLayoutBinding{
++                .binding = 2,
++                .descriptorType = vk::DescriptorType::eStorageImage,
++                .descriptorCount = 1,
++                .stageFlags = vk::ShaderStageFlagBits::eCompute,
++            },
++        };
++        debug_set_layout = Check<"create dlss debug set layout">(
++            device.createDescriptorSetLayoutUnique(vk::DescriptorSetLayoutCreateInfo{
++                .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
++                .bindingCount = static_cast<u32>(bindings.size()),
++                .pBindings = bindings.data(),
++            }));
++        const vk::PushConstantRange push_range{
++            .stageFlags = vk::ShaderStageFlagBits::eCompute,
++            .offset = 0,
++            .size = sizeof(u32),
++        };
++        debug_layout = Check<"create dlss debug layout">(
++            device.createPipelineLayoutUnique(vk::PipelineLayoutCreateInfo{
++                .setLayoutCount = 1,
++                .pSetLayouts = &*debug_set_layout,
++                .pushConstantRangeCount = 1,
++                .pPushConstantRanges = &push_range,
++            }));
++        debug_pipeline = Check<"create dlss debug pipeline">(device.createComputePipelineUnique(
++            {}, vk::ComputePipelineCreateInfo{
++                    .stage =
++                        {
++                            .stage = vk::ShaderStageFlagBits::eCompute,
++                            .module = debug_module,
++                            .pName = "main",
++                        },
++                    .layout = *debug_layout,
++                }));
++    }
++
++    // (Re)creates the output image and its two views when the size or view format changes.
++    void EnsureOutput(vk::Extent2D extent, vk::Format view_format) {
++        if (extent == size && view_format == sampled_format && output) {
++            return;
++        }
++        // The previous output may still be read by an in-flight frame.
++        device.waitIdle();
++        sampled_view.reset();
++        storage_view.reset();
++        output.Destroy();
++
++        const vk::ImageCreateInfo image_ci{
++            .flags =
++                vk::ImageCreateFlagBits::eMutableFormat | vk::ImageCreateFlagBits::eExtendedUsage,
++            .imageType = vk::ImageType::e2D,
++            .format = OutputFormat,
++            .extent = {extent.width, extent.height, 1},
++            .mipLevels = 1,
++            .arrayLayers = 1,
++            .samples = vk::SampleCountFlagBits::e1,
++            .tiling = vk::ImageTiling::eOptimal,
++            .usage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled |
++                     vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst,
++            .initialLayout = vk::ImageLayout::eUndefined,
++        };
++        output.Create(image_ci);
++        SetObjectName(device, static_cast<vk::Image>(output), "DLSS Output");
++
++        vk::ImageViewUsageCreateInfo storage_usage{
++            .usage = vk::ImageUsageFlagBits::eStorage,
++        };
++        storage_view = Check<"create dlss storage view">(device.createImageViewUnique({
++            .pNext = &storage_usage,
++            .image = output,
++            .viewType = vk::ImageViewType::e2D,
++            .format = OutputFormat,
++            .subresourceRange = ColorRange,
++        }));
++        vk::ImageViewUsageCreateInfo sampled_usage{
++            .usage = vk::ImageUsageFlagBits::eSampled,
++        };
++        sampled_view = Check<"create dlss sampled view">(device.createImageViewUnique({
++            .pNext = &sampled_usage,
++            .image = output,
++            .viewType = vk::ImageViewType::e2D,
++            .format = view_format,
++            .components = {.a = vk::ComponentSwizzle::eOne},
++            .subresourceRange = ColorRange,
++        }));
++        size = extent;
++        sampled_format = view_format;
++        output_initialized = false;
++    }
++
++    void OutputToGeneral(vk::CommandBuffer cmdbuf) {
++        const vk::ImageMemoryBarrier2 barrier{
++            .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
++            .srcAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
++            .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
++            .dstAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
++            .oldLayout = output_initialized ? vk::ImageLayout::eShaderReadOnlyOptimal
++                                            : vk::ImageLayout::eUndefined,
++            .newLayout = vk::ImageLayout::eGeneral,
++            .image = output,
++            .subresourceRange = ColorRange,
++        };
++        // Also makes the velocity pass writes visible to NGX.
++        const vk::MemoryBarrier2 memory{
++            .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
++            .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
++            .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
++            .dstAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
++        };
++        cmdbuf.pipelineBarrier2(vk::DependencyInfo{
++            .memoryBarrierCount = 1,
++            .pMemoryBarriers = &memory,
++            .imageMemoryBarrierCount = 1,
++            .pImageMemoryBarriers = &barrier,
++        });
++    }
++
++    void OutputToSampled(vk::CommandBuffer cmdbuf) {
++        const vk::ImageMemoryBarrier2 barrier{
++            .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
++            .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
++            .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
++            .dstAccessMask = vk::AccessFlagBits2::eMemoryRead,
++            .oldLayout = vk::ImageLayout::eGeneral,
++            .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
++            .image = output,
++            .subresourceRange = ColorRange,
++        };
++        cmdbuf.pipelineBarrier2(vk::DependencyInfo{
++            .imageMemoryBarrierCount = 1,
++            .pImageMemoryBarriers = &barrier,
++        });
++        output_initialized = true;
++    }
++
++#ifdef SHADPS4_ENABLE_DLSS
++    void Fail(const char* what, NVSDK_NGX_Result result) {
++        LOG_ERROR(Render_Vulkan, "DLSS: {} failed ({:#x}); presenting without DLSS", what,
++                  static_cast<u32>(result));
++        disabled = true;
++    }
++
++    bool InitNgx() {
++        if (ngx_tried) {
++            return ngx_ready;
++        }
++        ngx_tried = true;
++        const std::wstring data_path =
++            Common::FS::GetUserPath(Common::FS::PathType::LogDir).wstring();
++        const auto gipa = VULKAN_HPP_DEFAULT_DISPATCHER.vkGetInstanceProcAddr;
++        const auto gdpa = VULKAN_HPP_DEFAULT_DISPATCHER.vkGetDeviceProcAddr;
++        NVSDK_NGX_Result result = NVSDK_NGX_VULKAN_Init_with_ProjectID(
++            NgxProjectId, NVSDK_NGX_ENGINE_TYPE_CUSTOM, "shadPS4", data_path.c_str(),
++            instance.GetInstance(), instance.GetPhysicalDevice(), device, gipa, gdpa);
++        if (!NgxOk(result)) {
++            Fail("NGX init", result);
++            return false;
++        }
++        ngx_ready = true;
++        result = NVSDK_NGX_VULKAN_GetCapabilityParameters(&parameters);
++        if (!NgxOk(result) || !parameters) {
++            Fail("NGX capability query", result);
++            return false;
++        }
++        int available = 0;
++        NVSDK_NGX_Result available_result = NVSDK_NGX_Parameter_GetI(
++            parameters, NVSDK_NGX_Parameter_SuperSampling_Available, &available);
++        if (!NgxOk(available_result) || !available) {
++            int init_result = 0;
++            NVSDK_NGX_Parameter_GetI(parameters, NVSDK_NGX_Parameter_SuperSampling_FeatureInitResult,
++                                     &init_result);
++            Fail("DLSS availability", static_cast<NVSDK_NGX_Result>(init_result));
++            return false;
++        }
++        LOG_INFO(Render_Vulkan, "DLSS: NGX ready, Super Resolution available");
++        return true;
++    }
++
++    bool EnsureFeature(vk::CommandBuffer cmdbuf, vk::Extent2D extent, int flags, u32 preset) {
++        if (feature && feature_size == extent && feature_flags == flags &&
++            feature_preset == preset) {
++            return true;
++        }
++        if (feature) {
++            device.waitIdle();
++            NVSDK_NGX_VULKAN_ReleaseFeature(feature);
++            feature = nullptr;
++        }
++        NVSDK_NGX_Parameter_SetUI(parameters, NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_DLAA,
++                                  preset);
++        NVSDK_NGX_Parameter_SetUI(parameters, NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Quality,
++                                  preset);
++        NVSDK_NGX_DLSS_Create_Params create{};
++        create.Feature.InWidth = extent.width;
++        create.Feature.InHeight = extent.height;
++        create.Feature.InTargetWidth = extent.width;
++        create.Feature.InTargetHeight = extent.height;
++        create.Feature.InPerfQualityValue = NVSDK_NGX_PerfQuality_Value_DLAA;
++        create.InFeatureCreateFlags = flags;
++        const NVSDK_NGX_Result result = NGX_VULKAN_CREATE_DLSS_EXT1(
++            device, cmdbuf, 1, 1, &feature, parameters, &create);
++        if (!NgxOk(result) || !feature) {
++            Fail("DLSS feature create", result);
++            return false;
++        }
++        feature_size = extent;
++        feature_flags = flags;
++        feature_preset = preset;
++        LOG_INFO(Render_Vulkan, "DLSS: feature created at {}x{} (DLAA), flags {:#x}, preset {}",
++                 extent.width, extent.height, flags, preset);
++        return true;
++    }
++#endif
++};
++
++bool DlssPass::IsBuiltIn() {
++#ifdef SHADPS4_ENABLE_DLSS
++    return true;
++#else
++    return false;
++#endif
++}
++
++std::vector<const char*> DlssPass::RequiredInstanceExtensions() {
++    std::vector<const char*> out;
++#ifdef SHADPS4_ENABLE_DLSS
++    unsigned int instance_count = 0, device_count = 0;
++    const char** instance_exts = nullptr;
++    const char** device_exts = nullptr;
++    if (NgxOk(NVSDK_NGX_VULKAN_RequiredExtensions(&instance_count, &instance_exts, &device_count,
++                                                  &device_exts))) {
++        static std::vector<std::string> names;
++        names.assign(instance_exts, instance_exts + instance_count);
++        for (const auto& name : names) {
++            out.push_back(name.c_str());
++        }
++    }
++#endif
++    return out;
++}
++
++std::vector<const char*> DlssPass::RequiredDeviceExtensions() {
++    std::vector<const char*> out;
++#ifdef SHADPS4_ENABLE_DLSS
++    unsigned int instance_count = 0, device_count = 0;
++    const char** instance_exts = nullptr;
++    const char** device_exts = nullptr;
++    if (NgxOk(NVSDK_NGX_VULKAN_RequiredExtensions(&instance_count, &instance_exts, &device_count,
++                                                  &device_exts))) {
++        // Keep our own copies: NGX does not promise the strings outlive the call.
++        static std::vector<std::string> names;
++        names.assign(device_exts, device_exts + device_count);
++        for (const auto& name : names) {
++            out.push_back(name.c_str());
++        }
++    }
++#endif
++    return out;
++}
++
++DlssPass::DlssPass(const Instance& instance) : impl{std::make_unique<Impl>(instance)} {}
++
++DlssPass::~DlssPass() = default;
++
++vk::ImageView DlssPass::Render(vk::CommandBuffer cmdbuf, const Inputs& inputs,
++                               vk::Format sampled_format) {
++#ifdef SHADPS4_ENABLE_DLSS
++    auto& d = *impl;
++    if (d.disabled || !d.InitNgx()) {
++        return {};
++    }
++    if (inputs.size != inputs.velocity.size) {
++        LOG_WARNING(Render_Vulkan, "DLSS: frame {}x{} does not match depth {}x{}; skipped",
++                    inputs.size.width, inputs.size.height, inputs.velocity.size.width,
++                    inputs.velocity.size.height);
++        return {};
++    }
++    d.EnsureOutput(inputs.size, sampled_format);
++
++    int flags = NVSDK_NGX_DLSS_Feature_Flags_MVLowRes;
++    if (inputs.depth_inverted) {
++        flags |= NVSDK_NGX_DLSS_Feature_Flags_DepthInverted;
++    }
++    if (!d.EnsureFeature(cmdbuf, inputs.size, flags, inputs.preset)) {
++        return {};
++    }
++
++    d.OutputToGeneral(cmdbuf);
++
++    const auto vk_range = static_cast<VkImageSubresourceRange>(ColorRange);
++    NVSDK_NGX_Resource_VK color = NVSDK_NGX_Create_ImageView_Resource_VK(
++        inputs.color_view, inputs.color, vk_range, static_cast<VkFormat>(inputs.color_format),
++        inputs.size.width, inputs.size.height, false);
++    NVSDK_NGX_Resource_VK depth = NVSDK_NGX_Create_ImageView_Resource_VK(
++        inputs.velocity.depth_view, inputs.velocity.depth, vk_range, VK_FORMAT_R32_SFLOAT,
++        inputs.size.width, inputs.size.height, false);
++    NVSDK_NGX_Resource_VK motion = NVSDK_NGX_Create_ImageView_Resource_VK(
++        inputs.velocity.motion_view, inputs.velocity.motion, vk_range, VK_FORMAT_R16G16_SFLOAT,
++        inputs.size.width, inputs.size.height, false);
++    NVSDK_NGX_Resource_VK out = NVSDK_NGX_Create_ImageView_Resource_VK(
++        *d.storage_view, static_cast<vk::Image>(d.output), vk_range,
++        static_cast<VkFormat>(OutputFormat), inputs.size.width, inputs.size.height, true);
++
++    NVSDK_NGX_VK_DLSS_Eval_Params eval{};
++    eval.Feature.pInColor = &color;
++    eval.Feature.pInOutput = &out;
++    eval.pInDepth = &depth;
++    eval.pInMotionVectors = &motion;
++    eval.InJitterOffsetX = inputs.jitter_x;
++    eval.InJitterOffsetY = inputs.jitter_y;
++    eval.InRenderSubrectDimensions = {inputs.size.width, inputs.size.height};
++    eval.InReset = inputs.reset ? 1 : 0;
++    // The velocity pass writes pixels, previous minus current, which is NGX's convention.
++    eval.InMVScaleX = 1.0f;
++    eval.InMVScaleY = 1.0f;
++    eval.InPreExposure = 1.0f;
++    eval.InExposureScale = 1.0f;
++
++    if (!d.timer_pool) {
++        auto [pool_result, pool] = d.device.createQueryPoolUnique(vk::QueryPoolCreateInfo{
++            .queryType = vk::QueryType::eTimestamp,
++            .queryCount = 8,
++        });
++        if (pool_result == vk::Result::eSuccess) {
++            d.timer_pool = std::move(pool);
++        }
++    }
++    const u32 timer_slot = static_cast<u32>(d.frames % 4) * 2;
++    if (d.timer_pool) {
++        if (d.frames >= 4) {
++            std::array<u64, 2> stamps{};
++            const auto read = d.device.getQueryPoolResults(
++                *d.timer_pool, timer_slot, 2, sizeof(stamps), stamps.data(), sizeof(u64),
++                vk::QueryResultFlagBits::e64);
++            if (read == vk::Result::eSuccess && stamps[1] > stamps[0]) {
++                const double period = d.instance.GetPhysicalDevice()
++                                          .getProperties()
++                                          .limits.timestampPeriod;
++                d.timer_sum_ms += double(stamps[1] - stamps[0]) * period / 1e6;
++                if (d.timer_samples == 0) {
++                    d.timer_start = std::chrono::steady_clock::now();
++                }
++                if (++d.timer_samples == 600) {
++                    const double secs = std::chrono::duration<double>(
++                                            std::chrono::steady_clock::now() - d.timer_start)
++                                            .count();
++                    LOG_INFO(Render_Vulkan,
++                             "DLSS: evaluate takes {:.3f} ms on the GPU (avg of {}), {:.1f} fps",
++                             d.timer_sum_ms / d.timer_samples, d.timer_samples,
++                             secs > 0.0 ? (d.timer_samples - 1) / secs : 0.0);
++                    d.timer_sum_ms = 0.0;
++                    d.timer_samples = 0;
++                }
++            }
++        }
++        cmdbuf.resetQueryPool(*d.timer_pool, timer_slot, 2);
++        cmdbuf.writeTimestamp(vk::PipelineStageFlagBits::eAllCommands, *d.timer_pool, timer_slot);
++    }
++    const NVSDK_NGX_Result result =
++        NGX_VULKAN_EVALUATE_DLSS_EXT(cmdbuf, d.feature, d.parameters, &eval);
++    if (d.timer_pool) {
++        cmdbuf.writeTimestamp(vk::PipelineStageFlagBits::eAllCommands, *d.timer_pool,
++                              timer_slot + 1);
++    }
++    if (!NgxOk(result)) {
++        d.Fail("DLSS evaluate", result);
++        // Leave the image in a known layout for the next frame's barrier.
++        d.OutputToSampled(cmdbuf);
++        return {};
++    }
++    d.OutputToSampled(cmdbuf);
++    if (d.frames++ == 0) {
++        LOG_INFO(Render_Vulkan, "DLSS: first frame evaluated at {}x{}", inputs.size.width,
++                 inputs.size.height);
++    }
++    return *d.sampled_view;
++#else
++    (void)cmdbuf;
++    (void)inputs;
++    (void)sampled_format;
++    return {};
++#endif
++}
++
++vk::ImageView DlssPass::RenderDebug(vk::CommandBuffer cmdbuf,
++                                    const XfbVelocityPass::Outputs& velocity, u32 mode,
++                                    vk::Extent2D size, vk::Format sampled_format) {
++    auto& d = *impl;
++    d.EnsureOutput(size, sampled_format);
++    d.OutputToGeneral(cmdbuf);
++
++    const std::array image_infos = {
++        vk::DescriptorImageInfo{
++            .imageView = velocity.motion_view,
++            .imageLayout = vk::ImageLayout::eGeneral,
++        },
++        vk::DescriptorImageInfo{
++            .imageView = velocity.depth_view,
++            .imageLayout = vk::ImageLayout::eGeneral,
++        },
++        vk::DescriptorImageInfo{
++            .imageView = *d.storage_view,
++            .imageLayout = vk::ImageLayout::eGeneral,
++        },
++    };
++    const std::array writes = {
++        vk::WriteDescriptorSet{
++            .dstBinding = 0,
++            .descriptorCount = 1,
++            .descriptorType = vk::DescriptorType::eSampledImage,
++            .pImageInfo = &image_infos[0],
++        },
++        vk::WriteDescriptorSet{
++            .dstBinding = 1,
++            .descriptorCount = 1,
++            .descriptorType = vk::DescriptorType::eSampledImage,
++            .pImageInfo = &image_infos[1],
++        },
++        vk::WriteDescriptorSet{
++            .dstBinding = 2,
++            .descriptorCount = 1,
++            .descriptorType = vk::DescriptorType::eStorageImage,
++            .pImageInfo = &image_infos[2],
++        },
++    };
++    cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *d.debug_pipeline);
++    cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *d.debug_layout, 0, writes);
++    cmdbuf.pushConstants(*d.debug_layout, vk::ShaderStageFlagBits::eCompute, 0, sizeof(u32),
++                         &mode);
++    cmdbuf.dispatch((size.width + 7) / 8, (size.height + 7) / 8, 1);
++    d.OutputToSampled(cmdbuf);
++    return *d.sampled_view;
++}
++
++} // namespace Vulkan::HostPasses
+diff --git a/src/video_core/renderer_vulkan/host_passes/dlss_pass.h b/src/video_core/renderer_vulkan/host_passes/dlss_pass.h
+new file mode 100644
+index 0000000..b9b994b
+--- /dev/null
++++ b/src/video_core/renderer_vulkan/host_passes/dlss_pass.h
+@@ -0,0 +1,63 @@
++// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#pragma once
++
++#include <memory>
++#include <vector>
++#include "common/types.h"
++#include "video_core/renderer_vulkan/host_passes/xfb_velocity_pass.h"
++#include "video_core/renderer_vulkan/vk_common.h"
++
++namespace Vulkan {
++class Instance;
++}
++
++namespace Vulkan::HostPasses {
++
++// NVIDIA DLSS Super Resolution (DLAA when input and output sizes match) through the public NGX
++// SDK, run on the presented guest frame. Depth and motion vectors come from XfbVelocityPass; the
++// sub-pixel jitter is applied by the rasterizer to scene draws. Built only when the NGX SDK is
++// configured (SHADPS4_ENABLE_DLSS); otherwise every call is a no-op.
++class DlssPass {
++public:
++    // Whether this build contains the NGX integration.
++    static bool IsBuiltIn();
++
++    // Extensions NGX asks for. Queried before the instance and device exist.
++    static std::vector<const char*> RequiredInstanceExtensions();
++    static std::vector<const char*> RequiredDeviceExtensions();
++
++    explicit DlssPass(const Instance& instance);
++    ~DlssPass();
++
++    struct Inputs {
++        vk::Image color;
++        // Non-sRGB view of the colour, so DLSS sees the display-encoded values.
++        vk::ImageView color_view;
++        vk::Format color_format;
++        vk::Extent2D size;
++        XfbVelocityPass::Outputs velocity;
++        float jitter_x;
++        float jitter_y;
++        bool reset;
++        bool depth_inverted;
++        u32 preset;
++    };
++
++    // Evaluates DLSS into an internal image of the same size and returns a sampled view of it in
++    // `sampled_format` (sRGB or not, matching the guest view). Returns null when DLSS is not
++    // available or the inputs do not line up; the caller then presents the original frame.
++    vk::ImageView Render(vk::CommandBuffer cmdbuf, const Inputs& inputs,
++                         vk::Format sampled_format);
++
++    // Replaces the frame with a visualisation: 1 motion vectors, 2 depth.
++    vk::ImageView RenderDebug(vk::CommandBuffer cmdbuf, const XfbVelocityPass::Outputs& velocity,
++                              u32 mode, vk::Extent2D size, vk::Format sampled_format);
++
++private:
++    struct Impl;
++    std::unique_ptr<Impl> impl;
++};
++
++} // namespace Vulkan::HostPasses
+diff --git a/src/video_core/renderer_vulkan/host_passes/xfb_velocity_pass.cpp b/src/video_core/renderer_vulkan/host_passes/xfb_velocity_pass.cpp
+new file mode 100644
+index 0000000..0e6531e
+--- /dev/null
++++ b/src/video_core/renderer_vulkan/host_passes/xfb_velocity_pass.cpp
+@@ -0,0 +1,1169 @@
++// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#include <algorithm>
++#include <array>
++#include <cmath>
++#include <span>
++#include <tuple>
++#include <unordered_map>
++#include <vector>
++#include "common/assert.h"
++#include "common/enum.h"
++#include "common/hash.h"
++#include "common/logging/log.h"
++#include "shader_recompiler/xfb_layout.h"
++#include "video_core/host_shaders/xfb_camera_hypotheses_comp.h"
++#include "video_core/host_shaders/xfb_camera_solve_comp.h"
++#include "video_core/host_shaders/xfb_camera_sums_comp.h"
++#include "video_core/host_shaders/xfb_depth_copy_comp.h"
++#include "video_core/host_shaders/xfb_depth_copy_ms_comp.h"
++#include "video_core/host_shaders/xfb_velocity_frag.h"
++#include "video_core/host_shaders/xfb_velocity_resolve_comp.h"
++#include "video_core/host_shaders/xfb_velocity_vert.h"
++#include "video_core/renderer_vulkan/host_passes/xfb_velocity_pass.h"
++#include "video_core/renderer_vulkan/vk_instance.h"
++#include "video_core/renderer_vulkan/vk_platform.h"
++#include "video_core/renderer_vulkan/vk_runtime.h"
++#include "video_core/renderer_vulkan/vk_scheduler.h"
++#include "video_core/renderer_vulkan/vk_shader_util.h"
++#include "video_core/texture_cache/texture_cache.h"
++#include "video_core/xfb_capture.h"
++
++namespace Vulkan::HostPasses {
++
++// Frames between summary lines.
++constexpr u32 ReportInterval = 300;
++
++// Doubles per region in camera_sums: 28 sums and 4 unused.
++constexpr u64 CameraSumsStride = 32 * sizeof(double);
++// Random region samples tried per frame; each is one workgroup of xfb_camera_hypotheses.comp.
++constexpr u32 CameraHypothesisCount = 1024;
++// Doubles per hypothesis: C rows (16), inlier count, 3 unused.
++constexpr u64 CameraHypothesisStride = 20 * sizeof(double);
++// clip_to_prev rows and stats.
++constexpr u64 CameraResultSize = 5 * 4 * sizeof(float);
++
++constexpr vk::Format MotionFormat = vk::Format::eR16G16Sfloat;
++constexpr vk::Format MaskFormat = vk::Format::eR8Unorm;
++
++namespace {
++
++// The scene depth is the target drawn with the largest viewport sharing the output aspect ratio.
++// Image size is not enough: a pass can render into a sub-rectangle of a full-size target.
++const VideoCore::XfbRegion* SelectSceneDepth(std::span<const VideoCore::XfbRegion> regions,
++                                             vk::Extent2D output) {
++    struct Candidate {
++        const VideoCore::XfbRegion* region{};
++        u64 weight{};
++        u32 viewport_width{};
++        u32 viewport_height{};
++    };
++    std::unordered_map<u32, Candidate> candidates;
++    for (const auto& region : regions) {
++        auto& candidate = candidates[region.depth_id.index];
++        if (!candidate.region) {
++            candidate.region = &region;
++        }
++        candidate.weight += region.max_vertices;
++        const u32 width = static_cast<u32>(std::abs(region.state.viewport.width));
++        const u32 height = static_cast<u32>(std::abs(region.state.viewport.height));
++        if (u64(width) * height > u64(candidate.viewport_width) * candidate.viewport_height) {
++            candidate.viewport_width = width;
++            candidate.viewport_height = height;
++        }
++    }
++    const VideoCore::XfbRegion* best = nullptr;
++    bool best_matches = false;
++    u64 best_area = 0;
++    u64 best_weight = 0;
++    for (const auto& [index, candidate] : candidates) {
++        const auto& region = *candidate.region;
++        const bool matches = VideoCore::XfbMatchesAspect(candidate.viewport_width,
++                                                         candidate.viewport_height, output);
++        const u64 area = matches ? u64(candidate.viewport_width) * candidate.viewport_height : 0;
++        if (!best || std::tie(matches, area, candidate.weight) >
++                         std::tie(best_matches, best_area, best_weight)) {
++            best = &region;
++            best_matches = matches;
++            best_area = area;
++            best_weight = candidate.weight;
++        }
++    }
++    return best;
++}
++
++} // Anonymous namespace
++
++size_t XfbVelocityPass::PipelineKeyHash::operator()(const PipelineKey& key) const noexcept {
++    u64 hash = static_cast<u64>(key.depth_format);
++    hash = HashCombine(hash, static_cast<u64>(key.samples));
++    hash = HashCombine(hash, u64(key.depth_clamp) | (u64(key.depth_clip) << 1) |
++                                 (u64(key.negative_one_to_one) << 2));
++    return static_cast<size_t>(hash);
++}
++
++XfbVelocityPass::XfbVelocityPass(const Instance& instance_, Scheduler& scheduler_,
++                                 Runtime& runtime_, VideoCore::TextureCache& texture_cache_)
++    : instance{instance_}, scheduler{scheduler_}, runtime{runtime_}, texture_cache{texture_cache_},
++      region_table{instance, 0, sizeof(RegionEntry) * VideoCore::XfbCapture::MaxRegions,
++                   VideoCore::MemoryType::DeviceLocal, "XFB Velocity Regions"},
++      camera_sums{instance, 0, CameraSumsStride * VideoCore::XfbCapture::MaxRegions,
++                  VideoCore::MemoryType::DeviceLocal, "XFB Camera Sums"},
++      camera_hypotheses{instance, 0, CameraHypothesisStride * CameraHypothesisCount,
++                        VideoCore::MemoryType::DeviceLocal, "XFB Camera Hypotheses"},
++      camera_result{instance, 0, CameraResultSize, VideoCore::MemoryType::DeviceLocal,
++                    "XFB Camera"},
++      motion_image{instance.GetDevice(), instance.GetAllocator()},
++      mask_image{instance.GetDevice(), instance.GetAllocator()},
++      motion_ms_image{instance.GetDevice(), instance.GetAllocator()},
++      mask_ms_image{instance.GetDevice(), instance.GetAllocator()},
++      depth_out{instance.GetDevice(), instance.GetAllocator()} {
++    const vk::Device device = instance.GetDevice();
++
++    vertex_module = CompileSPV(XFB_VELOCITY_VERT, device);
++    ASSERT(vertex_module);
++    SetObjectName(device, vertex_module, "xfb_velocity.vert");
++
++    fragment_module = CompileSPV(XFB_VELOCITY_FRAG, device);
++    ASSERT(fragment_module);
++    SetObjectName(device, fragment_module, "xfb_velocity.frag");
++
++    const std::array bindings = {
++        vk::DescriptorSetLayoutBinding{
++            .binding = 0,
++            .descriptorType = vk::DescriptorType::eStorageBuffer,
++            .descriptorCount = 1,
++            .stageFlags = vk::ShaderStageFlagBits::eVertex,
++        },
++        vk::DescriptorSetLayoutBinding{
++            .binding = 1,
++            .descriptorType = vk::DescriptorType::eStorageBuffer,
++            .descriptorCount = 1,
++            .stageFlags = vk::ShaderStageFlagBits::eVertex,
++        },
++        vk::DescriptorSetLayoutBinding{
++            .binding = 2,
++            .descriptorType = vk::DescriptorType::eStorageBuffer,
++            .descriptorCount = 1,
++            .stageFlags = vk::ShaderStageFlagBits::eFragment,
++        },
++    };
++    desc_set_layout = Check<"create xfb velocity descriptor set layout">(
++        device.createDescriptorSetLayoutUnique(vk::DescriptorSetLayoutCreateInfo{
++            .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
++            .bindingCount = static_cast<u32>(bindings.size()),
++            .pBindings = bindings.data(),
++        }));
++
++    const vk::PushConstantRange push_constants{
++        .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
++        .offset = 0,
++        .size = sizeof(PushConstants),
++    };
++    pipeline_layout = Check<"create xfb velocity pipeline layout">(
++        device.createPipelineLayoutUnique(vk::PipelineLayoutCreateInfo{
++            .setLayoutCount = 1,
++            .pSetLayouts = &*desc_set_layout,
++            .pushConstantRangeCount = 1,
++            .pPushConstantRanges = &push_constants,
++        }));
++
++    resolve_module = CompileSPV(XFB_VELOCITY_RESOLVE_COMP, device);
++    ASSERT(resolve_module);
++    SetObjectName(device, resolve_module, "xfb_velocity_resolve.comp");
++
++    const std::array resolve_bindings = {
++        vk::DescriptorSetLayoutBinding{
++            .binding = 0,
++            .descriptorType = vk::DescriptorType::eSampledImage,
++            .descriptorCount = 1,
++            .stageFlags = vk::ShaderStageFlagBits::eCompute,
++        },
++        vk::DescriptorSetLayoutBinding{
++            .binding = 1,
++            .descriptorType = vk::DescriptorType::eSampledImage,
++            .descriptorCount = 1,
++            .stageFlags = vk::ShaderStageFlagBits::eCompute,
++        },
++        vk::DescriptorSetLayoutBinding{
++            .binding = 2,
++            .descriptorType = vk::DescriptorType::eStorageImage,
++            .descriptorCount = 1,
++            .stageFlags = vk::ShaderStageFlagBits::eCompute,
++        },
++        vk::DescriptorSetLayoutBinding{
++            .binding = 3,
++            .descriptorType = vk::DescriptorType::eStorageImage,
++            .descriptorCount = 1,
++            .stageFlags = vk::ShaderStageFlagBits::eCompute,
++        },
++    };
++    resolve_set_layout = Check<"create xfb resolve descriptor set layout">(
++        device.createDescriptorSetLayoutUnique(vk::DescriptorSetLayoutCreateInfo{
++            .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
++            .bindingCount = static_cast<u32>(resolve_bindings.size()),
++            .pBindings = resolve_bindings.data(),
++        }));
++    resolve_layout = Check<"create xfb resolve pipeline layout">(
++        device.createPipelineLayoutUnique(vk::PipelineLayoutCreateInfo{
++            .setLayoutCount = 1,
++            .pSetLayouts = &*resolve_set_layout,
++        }));
++    resolve_pipeline = Check<"create xfb resolve pipeline">(device.createComputePipelineUnique(
++        {}, vk::ComputePipelineCreateInfo{
++                .stage =
++                    {
++                        .stage = vk::ShaderStageFlagBits::eCompute,
++                        .module = resolve_module,
++                        .pName = "main",
++                    },
++                .layout = *resolve_layout,
++            }));
++    SetObjectName(device, *resolve_pipeline, "xfb velocity resolve pipeline");
++
++    depth_copy_module = CompileSPV(XFB_DEPTH_COPY_COMP, device);
++    ASSERT(depth_copy_module);
++    depth_copy_ms_module = CompileSPV(XFB_DEPTH_COPY_MS_COMP, device);
++    ASSERT(depth_copy_ms_module);
++    const std::array depth_copy_bindings = {
++        vk::DescriptorSetLayoutBinding{
++            .binding = 0,
++            .descriptorType = vk::DescriptorType::eSampledImage,
++            .descriptorCount = 1,
++            .stageFlags = vk::ShaderStageFlagBits::eCompute,
++        },
++        vk::DescriptorSetLayoutBinding{
++            .binding = 1,
++            .descriptorType = vk::DescriptorType::eStorageImage,
++            .descriptorCount = 1,
++            .stageFlags = vk::ShaderStageFlagBits::eCompute,
++        },
++    };
++    depth_copy_set_layout = Check<"create xfb depth copy descriptor set layout">(
++        device.createDescriptorSetLayoutUnique(vk::DescriptorSetLayoutCreateInfo{
++            .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
++            .bindingCount = static_cast<u32>(depth_copy_bindings.size()),
++            .pBindings = depth_copy_bindings.data(),
++        }));
++    depth_copy_layout = Check<"create xfb depth copy pipeline layout">(
++        device.createPipelineLayoutUnique(vk::PipelineLayoutCreateInfo{
++            .setLayoutCount = 1,
++            .pSetLayouts = &*depth_copy_set_layout,
++        }));
++    for (auto [module, pipeline] : {std::pair{depth_copy_module, &depth_copy_pipeline},
++                                    std::pair{depth_copy_ms_module, &depth_copy_ms_pipeline}}) {
++        *pipeline = Check<"create xfb depth copy pipeline">(device.createComputePipelineUnique(
++            {}, vk::ComputePipelineCreateInfo{
++                    .stage =
++                        {
++                            .stage = vk::ShaderStageFlagBits::eCompute,
++                            .module = module,
++                            .pName = "main",
++                        },
++                    .layout = *depth_copy_layout,
++                }));
++    }
++
++    // The solve accumulates in doubles; without them there is no camera fallback.
++    if (instance.IsShaderFloat64Supported()) {
++        CreateCameraPipelines();
++    }
++}
++
++XfbVelocityPass::~XfbVelocityPass() {
++    const vk::Device device = instance.GetDevice();
++    pipelines.clear();
++    resolve_pipeline.reset();
++    camera_sums_pipeline.reset();
++    camera_hypotheses_pipeline.reset();
++    camera_solve_pipeline.reset();
++    device.destroyShaderModule(vertex_module);
++    device.destroyShaderModule(fragment_module);
++    device.destroyShaderModule(resolve_module);
++    depth_copy_pipeline.reset();
++    depth_copy_ms_pipeline.reset();
++    device.destroyShaderModule(depth_copy_module);
++    device.destroyShaderModule(depth_copy_ms_module);
++    device.destroyShaderModule(camera_sums_module);
++    device.destroyShaderModule(camera_hypotheses_module);
++    device.destroyShaderModule(camera_solve_module);
++}
++
++void XfbVelocityPass::CreateCameraPipelines() {
++    const vk::Device device = instance.GetDevice();
++    const auto storage_bindings = [](u32 count) {
++        std::vector<vk::DescriptorSetLayoutBinding> bindings(count);
++        for (u32 i = 0; i < count; ++i) {
++            bindings[i] = vk::DescriptorSetLayoutBinding{
++                .binding = i,
++                .descriptorType = vk::DescriptorType::eStorageBuffer,
++                .descriptorCount = 1,
++                .stageFlags = vk::ShaderStageFlagBits::eCompute,
++            };
++        }
++        return bindings;
++    };
++    const auto create_set_layout =
++        [&](const std::vector<vk::DescriptorSetLayoutBinding>& bindings) {
++            return Check<"create xfb camera descriptor set layout">(
++                device.createDescriptorSetLayoutUnique(vk::DescriptorSetLayoutCreateInfo{
++                    .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
++                    .bindingCount = static_cast<u32>(bindings.size()),
++                    .pBindings = bindings.data(),
++                }));
++        };
++    const auto create_pipeline = [&](vk::ShaderModule module, vk::PipelineLayout layout) {
++        return Check<"create xfb camera pipeline">(device.createComputePipelineUnique(
++            {}, vk::ComputePipelineCreateInfo{
++                    .stage =
++                        {
++                            .stage = vk::ShaderStageFlagBits::eCompute,
++                            .module = module,
++                            .pName = "main",
++                        },
++                    .layout = layout,
++                }));
++    };
++
++    camera_sums_module = CompileSPV(XFB_CAMERA_SUMS_COMP, device);
++    ASSERT(camera_sums_module);
++    SetObjectName(device, camera_sums_module, "xfb_camera_sums.comp");
++    camera_hypotheses_module = CompileSPV(XFB_CAMERA_HYPOTHESES_COMP, device);
++    ASSERT(camera_hypotheses_module);
++    SetObjectName(device, camera_hypotheses_module, "xfb_camera_hypotheses.comp");
++    camera_solve_module = CompileSPV(XFB_CAMERA_SOLVE_COMP, device);
++    ASSERT(camera_solve_module);
++    SetObjectName(device, camera_solve_module, "xfb_camera_solve.comp");
++
++    camera_sums_set_layout = create_set_layout(storage_bindings(5));
++    camera_hypotheses_set_layout = create_set_layout(storage_bindings(2));
++    camera_solve_set_layout = create_set_layout(storage_bindings(3));
++
++    camera_sums_layout = Check<"create xfb camera sums pipeline layout">(
++        device.createPipelineLayoutUnique(vk::PipelineLayoutCreateInfo{
++            .setLayoutCount = 1,
++            .pSetLayouts = &*camera_sums_set_layout,
++        }));
++    const vk::PushConstantRange hypotheses_constants{
++        .stageFlags = vk::ShaderStageFlagBits::eCompute,
++        .offset = 0,
++        .size = sizeof(u32),
++    };
++    camera_hypotheses_layout = Check<"create xfb camera hypotheses pipeline layout">(
++        device.createPipelineLayoutUnique(vk::PipelineLayoutCreateInfo{
++            .setLayoutCount = 1,
++            .pSetLayouts = &*camera_hypotheses_set_layout,
++            .pushConstantRangeCount = 1,
++            .pPushConstantRanges = &hypotheses_constants,
++        }));
++    const vk::PushConstantRange solve_constants{
++        .stageFlags = vk::ShaderStageFlagBits::eCompute,
++        .offset = 0,
++        .size = 2 * sizeof(u32),
++    };
++    camera_solve_layout = Check<"create xfb camera solve pipeline layout">(
++        device.createPipelineLayoutUnique(vk::PipelineLayoutCreateInfo{
++            .setLayoutCount = 1,
++            .pSetLayouts = &*camera_solve_set_layout,
++            .pushConstantRangeCount = 1,
++            .pPushConstantRanges = &solve_constants,
++        }));
++
++    camera_sums_pipeline = create_pipeline(camera_sums_module, *camera_sums_layout);
++    SetObjectName(device, *camera_sums_pipeline, "xfb camera sums pipeline");
++    camera_hypotheses_pipeline =
++        create_pipeline(camera_hypotheses_module, *camera_hypotheses_layout);
++    SetObjectName(device, *camera_hypotheses_pipeline, "xfb camera hypotheses pipeline");
++    camera_solve_pipeline = create_pipeline(camera_solve_module, *camera_solve_layout);
++    SetObjectName(device, *camera_solve_pipeline, "xfb camera solve pipeline");
++    camera_supported = true;
++}
++
++void XfbVelocityPass::SolveCamera(vk::CommandBuffer cmdbuf, const VideoCore::XfbCapture& capture,
++                                  u32 count) {
++    const auto to_fragment = [&] {
++        const vk::BufferMemoryBarrier2 barrier{
++            .srcStageMask =
++                vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eTransfer,
++            .srcAccessMask =
++                vk::AccessFlagBits2::eShaderStorageWrite | vk::AccessFlagBits2::eTransferWrite,
++            .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
++            .dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead,
++            .buffer = camera_result.Handle(),
++            .offset = 0,
++            .size = vk::WholeSize,
++        };
++        cmdbuf.pipelineBarrier2(vk::DependencyInfo{
++            .bufferMemoryBarrierCount = 1,
++            .pBufferMemoryBarriers = &barrier,
++        });
++    };
++    if (!camera_supported || count == 0) {
++        // stats.x == 0 disables the fallback in the fragment shader.
++        cmdbuf.fillBuffer(camera_result.Handle(), 0, vk::WholeSize, 0);
++        to_fragment();
++        return;
++    }
++
++    const std::array sums_infos = {
++        vk::DescriptorBufferInfo{capture.CurrentBuffer(), 0, vk::WholeSize},
++        vk::DescriptorBufferInfo{capture.PreviousBuffer(), 0, vk::WholeSize},
++        vk::DescriptorBufferInfo{capture.CurrentCounters(), 0, vk::WholeSize},
++        vk::DescriptorBufferInfo{region_table.Handle(), 0, vk::WholeSize},
++        vk::DescriptorBufferInfo{camera_sums.Handle(), 0, vk::WholeSize},
++    };
++    std::array<vk::WriteDescriptorSet, 5> sums_writes{};
++    for (u32 i = 0; i < sums_writes.size(); ++i) {
++        sums_writes[i] = vk::WriteDescriptorSet{
++            .dstBinding = i,
++            .descriptorCount = 1,
++            .descriptorType = vk::DescriptorType::eStorageBuffer,
++            .pBufferInfo = &sums_infos[i],
++        };
++    }
++    cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *camera_sums_pipeline);
++    cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *camera_sums_layout, 0,
++                                sums_writes);
++    cmdbuf.dispatch(count, 1, 1);
++
++    const auto compute_barrier = [&](vk::Buffer buffer) {
++        const vk::BufferMemoryBarrier2 barrier{
++            .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
++            .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
++            .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
++            .dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead,
++            .buffer = buffer,
++            .offset = 0,
++            .size = vk::WholeSize,
++        };
++        cmdbuf.pipelineBarrier2(vk::DependencyInfo{
++            .bufferMemoryBarrierCount = 1,
++            .pBufferMemoryBarriers = &barrier,
++        });
++    };
++    compute_barrier(camera_sums.Handle());
++
++    const std::array hypotheses_infos = {
++        vk::DescriptorBufferInfo{camera_sums.Handle(), 0, vk::WholeSize},
++        vk::DescriptorBufferInfo{camera_hypotheses.Handle(), 0, vk::WholeSize},
++    };
++    std::array<vk::WriteDescriptorSet, 2> hypotheses_writes{};
++    for (u32 i = 0; i < hypotheses_writes.size(); ++i) {
++        hypotheses_writes[i] = vk::WriteDescriptorSet{
++            .dstBinding = i,
++            .descriptorCount = 1,
++            .descriptorType = vk::DescriptorType::eStorageBuffer,
++            .pBufferInfo = &hypotheses_infos[i],
++        };
++    }
++    cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *camera_hypotheses_pipeline);
++    cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *camera_hypotheses_layout, 0,
++                                hypotheses_writes);
++    cmdbuf.pushConstants(*camera_hypotheses_layout, vk::ShaderStageFlagBits::eCompute, 0,
++                         sizeof(count), &count);
++    cmdbuf.dispatch(CameraHypothesisCount, 1, 1);
++    compute_barrier(camera_hypotheses.Handle());
++
++    const std::array solve_infos = {
++        vk::DescriptorBufferInfo{camera_sums.Handle(), 0, vk::WholeSize},
++        vk::DescriptorBufferInfo{camera_hypotheses.Handle(), 0, vk::WholeSize},
++        vk::DescriptorBufferInfo{camera_result.Handle(), 0, vk::WholeSize},
++    };
++    std::array<vk::WriteDescriptorSet, 3> solve_writes{};
++    for (u32 i = 0; i < solve_writes.size(); ++i) {
++        solve_writes[i] = vk::WriteDescriptorSet{
++            .dstBinding = i,
++            .descriptorCount = 1,
++            .descriptorType = vk::DescriptorType::eStorageBuffer,
++            .pBufferInfo = &solve_infos[i],
++        };
++    }
++    const std::array<u32, 2> solve_constants = {count, CameraHypothesisCount};
++    cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *camera_solve_pipeline);
++    cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *camera_solve_layout, 0,
++                                solve_writes);
++    cmdbuf.pushConstants(*camera_solve_layout, vk::ShaderStageFlagBits::eCompute, 0,
++                         sizeof(solve_constants), solve_constants.data());
++    cmdbuf.dispatch(1, 1, 1);
++    to_fragment();
++}
++
++vk::Pipeline XfbVelocityPass::GetPipeline(const PipelineKey& key) {
++    if (const auto it = pipelines.find(key); it != pipelines.end()) {
++        return *it->second;
++    }
++
++    const std::array stages = {
++        vk::PipelineShaderStageCreateInfo{
++            .stage = vk::ShaderStageFlagBits::eVertex,
++            .module = vertex_module,
++            .pName = "main",
++        },
++        vk::PipelineShaderStageCreateInfo{
++            .stage = vk::ShaderStageFlagBits::eFragment,
++            .module = fragment_module,
++            .pName = "main",
++        },
++    };
++
++    const std::array color_formats = {MotionFormat, MaskFormat};
++    const vk::PipelineRenderingCreateInfo rendering_ci{
++        .colorAttachmentCount = static_cast<u32>(color_formats.size()),
++        .pColorAttachmentFormats = color_formats.data(),
++        .depthAttachmentFormat = key.depth_format,
++    };
++
++    const vk::PipelineVertexInputStateCreateInfo vertex_input{};
++    const vk::PipelineInputAssemblyStateCreateInfo input_assembly{
++        .topology = vk::PrimitiveTopology::eTriangleList,
++    };
++
++    const vk::PipelineViewportDepthClipControlCreateInfoEXT clip_control{
++        .negativeOneToOne = key.negative_one_to_one,
++    };
++    const vk::PipelineViewportStateCreateInfo viewport_info{
++        .pNext = instance.IsDepthClipControlSupported() ? &clip_control : nullptr,
++    };
++
++    vk::StructureChain raster_chain = {
++        vk::PipelineRasterizationStateCreateInfo{
++            .depthClampEnable =
++                key.depth_clamp && (!key.depth_clip || instance.IsDepthClipEnableSupported()),
++            .rasterizerDiscardEnable = false,
++            .polygonMode = vk::PolygonMode::eFill,
++            .lineWidth = 1.0f,
++        },
++        vk::PipelineRasterizationDepthClipStateCreateInfoEXT{
++            .depthClipEnable = key.depth_clip,
++        },
++    };
++    if (!instance.IsDepthClipEnableSupported()) {
++        raster_chain.unlink<vk::PipelineRasterizationDepthClipStateCreateInfoEXT>();
++    }
++
++    const vk::PipelineMultisampleStateCreateInfo multisample{
++        .rasterizationSamples = key.samples,
++    };
++
++    const vk::PipelineDepthStencilStateCreateInfo depth_stencil{
++        .depthTestEnable = true,
++        .depthWriteEnable = false,
++        .depthCompareOp = vk::CompareOp::eEqual,
++        .stencilTestEnable = false,
++    };
++
++    const std::array blend_attachments = {
++        vk::PipelineColorBlendAttachmentState{
++            .blendEnable = false,
++            .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG,
++        },
++        vk::PipelineColorBlendAttachmentState{
++            .blendEnable = false,
++            .colorWriteMask = vk::ColorComponentFlagBits::eR,
++        },
++    };
++    const vk::PipelineColorBlendStateCreateInfo color_blend{
++        .attachmentCount = static_cast<u32>(blend_attachments.size()),
++        .pAttachments = blend_attachments.data(),
++    };
++
++    const std::array dynamic_states = {
++        vk::DynamicState::eViewportWithCount, vk::DynamicState::eScissorWithCount,
++        vk::DynamicState::eDepthBiasEnable,   vk::DynamicState::eDepthBias,
++        vk::DynamicState::eCullMode,          vk::DynamicState::eFrontFace,
++    };
++    const vk::PipelineDynamicStateCreateInfo dynamic_info{
++        .dynamicStateCount = static_cast<u32>(dynamic_states.size()),
++        .pDynamicStates = dynamic_states.data(),
++    };
++
++    const vk::GraphicsPipelineCreateInfo pipeline_ci{
++        .pNext = &rendering_ci,
++        .stageCount = static_cast<u32>(stages.size()),
++        .pStages = stages.data(),
++        .pVertexInputState = &vertex_input,
++        .pInputAssemblyState = &input_assembly,
++        .pViewportState = &viewport_info,
++        .pRasterizationState = &raster_chain.get(),
++        .pMultisampleState = &multisample,
++        .pDepthStencilState = &depth_stencil,
++        .pColorBlendState = &color_blend,
++        .pDynamicState = &dynamic_info,
++        .layout = *pipeline_layout,
++    };
++
++    auto pipeline = Check<"create xfb velocity pipeline">(
++        instance.GetDevice().createGraphicsPipelineUnique({}, pipeline_ci));
++    SetObjectName(instance.GetDevice(), *pipeline, "xfb velocity pipeline");
++    const vk::Pipeline handle = *pipeline;
++    pipelines.emplace(key, std::move(pipeline));
++    return handle;
++}
++
++void XfbVelocityPass::ResizeTargets(u32 width, u32 height, vk::SampleCountFlagBits samples_) {
++    if (targets_initialized && size.width == width && size.height == height &&
++        samples == samples_) {
++        return;
++    }
++    const vk::Device device = instance.GetDevice();
++    scheduler.Finish();
++
++    motion_view.reset();
++    mask_view.reset();
++    motion_ms_view.reset();
++    mask_ms_view.reset();
++    motion_image.Destroy();
++    mask_image.Destroy();
++    motion_ms_image.Destroy();
++    mask_ms_image.Destroy();
++    depth_out_view.reset();
++    depth_out.Destroy();
++
++    size = vk::Extent2D{width, height};
++    samples = samples_;
++    targets_initialized = true;
++    const bool multisampled = samples != vk::SampleCountFlagBits::e1;
++
++    vk::ImageCreateInfo image_ci{
++        .imageType = vk::ImageType::e2D,
++        .format = MotionFormat,
++        .extent = {width, height, 1},
++        .mipLevels = 1,
++        .arrayLayers = 1,
++        .samples = vk::SampleCountFlagBits::e1,
++        .usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled |
++                 vk::ImageUsageFlagBits::eTransferSrc |
++                 (multisampled ? vk::ImageUsageFlagBits::eStorage : vk::ImageUsageFlags{}),
++        .initialLayout = vk::ImageLayout::eUndefined,
++    };
++    motion_image.Create(image_ci);
++    SetObjectName(device, static_cast<vk::Image>(motion_image), "XFB Velocity Motion");
++
++    image_ci.format = MaskFormat;
++    mask_image.Create(image_ci);
++    SetObjectName(device, static_cast<vk::Image>(mask_image), "XFB Velocity Mask");
++
++    vk::ImageViewCreateInfo view_ci{
++        .image = motion_image,
++        .viewType = vk::ImageViewType::e2D,
++        .format = MotionFormat,
++        .subresourceRange{
++            .aspectMask = vk::ImageAspectFlagBits::eColor,
++            .levelCount = 1,
++            .layerCount = 1,
++        },
++    };
++    motion_view = Check<"create xfb motion view">(device.createImageViewUnique(view_ci));
++    SetObjectName(device, *motion_view, "XFB Velocity Motion View");
++
++    view_ci.image = mask_image;
++    view_ci.format = MaskFormat;
++    mask_view = Check<"create xfb mask view">(device.createImageViewUnique(view_ci));
++    SetObjectName(device, *mask_view, "XFB Velocity Mask View");
++
++    image_ci.format = vk::Format::eR32Sfloat;
++    image_ci.usage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled;
++    depth_out.Create(image_ci);
++    SetObjectName(device, static_cast<vk::Image>(depth_out), "XFB Velocity Depth");
++    view_ci.image = depth_out;
++    view_ci.format = vk::Format::eR32Sfloat;
++    depth_out_view = Check<"create xfb depth view">(device.createImageViewUnique(view_ci));
++
++    if (!multisampled) {
++        return;
++    }
++    image_ci.samples = samples;
++    image_ci.usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled;
++    image_ci.format = MotionFormat;
++    motion_ms_image.Create(image_ci);
++    SetObjectName(device, static_cast<vk::Image>(motion_ms_image), "XFB Velocity Motion MS");
++    image_ci.format = MaskFormat;
++    mask_ms_image.Create(image_ci);
++    SetObjectName(device, static_cast<vk::Image>(mask_ms_image), "XFB Velocity Mask MS");
++
++    view_ci.image = motion_ms_image;
++    view_ci.format = MotionFormat;
++    motion_ms_view = Check<"create xfb motion ms view">(device.createImageViewUnique(view_ci));
++    view_ci.image = mask_ms_image;
++    view_ci.format = MaskFormat;
++    mask_ms_view = Check<"create xfb mask ms view">(device.createImageViewUnique(view_ci));
++}
++
++std::optional<XfbVelocityPass::Outputs> XfbVelocityPass::FrameOutputs() const {
++    if (!outputs_valid) {
++        return std::nullopt;
++    }
++    return Outputs{
++        .motion = motion_image,
++        .motion_view = *motion_view,
++        .depth = depth_out,
++        .depth_view = *depth_out_view,
++        .size = size,
++    };
++}
++
++void XfbVelocityPass::CopyDepth(vk::CommandBuffer cmdbuf, vk::ImageView depth_view,
++                                vk::ImageLayout layout) {
++    const vk::ImageMemoryBarrier2 barrier{
++        .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
++        .srcAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
++        .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
++        .dstAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
++        .oldLayout = vk::ImageLayout::eUndefined,
++        .newLayout = vk::ImageLayout::eGeneral,
++        .image = depth_out,
++        .subresourceRange{
++            .aspectMask = vk::ImageAspectFlagBits::eColor,
++            .levelCount = 1,
++            .layerCount = 1,
++        },
++    };
++    cmdbuf.pipelineBarrier2(vk::DependencyInfo{
++        .imageMemoryBarrierCount = 1,
++        .pImageMemoryBarriers = &barrier,
++    });
++    const std::array image_infos = {
++        vk::DescriptorImageInfo{.imageView = depth_view, .imageLayout = layout},
++        vk::DescriptorImageInfo{.imageView = *depth_out_view,
++                                .imageLayout = vk::ImageLayout::eGeneral},
++    };
++    const std::array writes = {
++        vk::WriteDescriptorSet{
++            .dstBinding = 0,
++            .descriptorCount = 1,
++            .descriptorType = vk::DescriptorType::eSampledImage,
++            .pImageInfo = &image_infos[0],
++        },
++        vk::WriteDescriptorSet{
++            .dstBinding = 1,
++            .descriptorCount = 1,
++            .descriptorType = vk::DescriptorType::eStorageImage,
++            .pImageInfo = &image_infos[1],
++        },
++    };
++    const bool multisampled = samples != vk::SampleCountFlagBits::e1;
++    cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute,
++                        multisampled ? *depth_copy_ms_pipeline : *depth_copy_pipeline);
++    cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *depth_copy_layout, 0, writes);
++    cmdbuf.dispatch((size.width + 7) / 8, (size.height + 7) / 8, 1);
++}
++
++void XfbVelocityPass::Resolve(vk::CommandBuffer cmdbuf) {
++    const vk::ImageSubresourceRange color_range{
++        .aspectMask = vk::ImageAspectFlagBits::eColor,
++        .levelCount = 1,
++        .layerCount = 1,
++    };
++    const auto to_sampled = [&](vk::Image image) {
++        return vk::ImageMemoryBarrier2{
++            .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
++            .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
++            .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
++            .dstAccessMask = vk::AccessFlagBits2::eShaderSampledRead,
++            .oldLayout = vk::ImageLayout::eColorAttachmentOptimal,
++            .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
++            .image = image,
++            .subresourceRange = color_range,
++        };
++    };
++    const auto to_storage = [&](vk::Image image) {
++        return vk::ImageMemoryBarrier2{
++            .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
++            .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
++            .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
++            .dstAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
++            .oldLayout = vk::ImageLayout::eUndefined,
++            .newLayout = vk::ImageLayout::eGeneral,
++            .image = image,
++            .subresourceRange = color_range,
++        };
++    };
++    const std::array barriers = {
++        to_sampled(motion_ms_image),
++        to_sampled(mask_ms_image),
++        to_storage(motion_image),
++        to_storage(mask_image),
++    };
++    cmdbuf.pipelineBarrier2(vk::DependencyInfo{
++        .imageMemoryBarrierCount = static_cast<u32>(barriers.size()),
++        .pImageMemoryBarriers = barriers.data(),
++    });
++
++    const std::array image_infos = {
++        vk::DescriptorImageInfo{
++            .imageView = *motion_ms_view,
++            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
++        },
++        vk::DescriptorImageInfo{
++            .imageView = *mask_ms_view,
++            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
++        },
++        vk::DescriptorImageInfo{
++            .imageView = *motion_view,
++            .imageLayout = vk::ImageLayout::eGeneral,
++        },
++        vk::DescriptorImageInfo{
++            .imageView = *mask_view,
++            .imageLayout = vk::ImageLayout::eGeneral,
++        },
++    };
++    std::array<vk::WriteDescriptorSet, 4> writes{};
++    for (u32 i = 0; i < writes.size(); ++i) {
++        writes[i] = vk::WriteDescriptorSet{
++            .dstBinding = i,
++            .descriptorCount = 1,
++            .descriptorType =
++                i < 2 ? vk::DescriptorType::eSampledImage : vk::DescriptorType::eStorageImage,
++            .pImageInfo = &image_infos[i],
++        };
++    }
++    cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *resolve_pipeline);
++    cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *resolve_layout, 0, writes);
++    cmdbuf.dispatch((size.width + 7) / 8, (size.height + 7) / 8, 1);
++}
++
++void XfbVelocityPass::Render(const VideoCore::XfbCapture& capture, vk::Extent2D output_extent) {
++    outputs_valid = false;
++    const auto cur_regions = capture.CurrentRegions();
++    if (cur_regions.empty()) {
++        return;
++    }
++
++    const VideoCore::XfbRegion* main = SelectSceneDepth(cur_regions, output_extent);
++    if (!main || !main->depth_view) {
++        return;
++    }
++    // The texture cache may have deleted or recycled the depth target since capture. An
++    // unregistered image is already queued for destruction and must not be recorded against.
++    if (!texture_cache.IsImageAllocated(main->depth_id)) {
++        return;
++    }
++    if (const auto& image = texture_cache.GetImage(main->depth_id);
++        image.GetImage() != main->depth_image ||
++        False(image.flags & VideoCore::ImageFlagBits::Registered)) {
++        return;
++    }
++
++    ResizeTargets(main->width, main->height, main->samples);
++    const bool multisampled = samples != vk::SampleCountFlagBits::e1;
++    const vk::Image motion_target = multisampled ? static_cast<vk::Image>(motion_ms_image)
++                                                 : static_cast<vk::Image>(motion_image);
++    const vk::Image mask_target =
++        multisampled ? static_cast<vk::Image>(mask_ms_image) : static_cast<vk::Image>(mask_image);
++    const vk::ImageView motion_target_view = multisampled ? *motion_ms_view : *motion_view;
++    const vk::ImageView mask_target_view = multisampled ? *mask_ms_view : *mask_view;
++
++    // Only previous draws against the previous scene depth are candidates. The same mesh drawn
++    // into a reflection or shadow pass shares the key, and its occurrence would otherwise shift
++    // every match after it onto the wrong pass.
++    const auto prev_regions = capture.PreviousRegions();
++    const VideoCore::XfbRegion* prev_main = SelectSceneDepth(prev_regions, output_extent);
++    std::unordered_map<u64, std::vector<const VideoCore::XfbRegion*>> prev_by_key;
++    if (prev_main) {
++        for (const auto& region : prev_regions) {
++            if (region.depth_id == prev_main->depth_id) {
++                prev_by_key[region.key].push_back(&region);
++            }
++        }
++    }
++
++    const vk::CommandBuffer cmdbuf = scheduler.CommandBuffer();
++    scheduler.EndRendering();
++
++    auto& depth_image = texture_cache.GetImage(main->depth_id);
++    const vk::ImageLayout depth_layout = main->has_stencil
++                                             ? vk::ImageLayout::eDepthStencilReadOnlyOptimal
++                                             : vk::ImageLayout::eDepthReadOnlyOptimal;
++    runtime.Transit(&depth_image, depth_layout,
++                    vk::PipelineStageFlagBits2::eEarlyFragmentTests |
++                        vk::PipelineStageFlagBits2::eLateFragmentTests |
++                        vk::PipelineStageFlagBits2::eComputeShader,
++                    vk::AccessFlagBits2::eDepthStencilAttachmentRead |
++                        vk::AccessFlagBits2::eShaderSampledRead);
++    runtime.FlushBarriers();
++
++    // Match each scene draw to its previous-frame counterpart and build its constants.
++    const bool clip_control = instance.IsDepthClipControlSupported();
++    std::unordered_map<u64, u32> occurrence;
++    std::vector<const VideoCore::XfbRegion*> draws;
++    entries.clear();
++    u64 matched = 0;
++    for (const auto& region : cur_regions) {
++        if (region.depth_id != main->depth_id) {
++            continue;
++        }
++        const u32 index = occurrence[region.key]++;
++        const VideoCore::XfbRegion* prev = nullptr;
++        if (const auto it = prev_by_key.find(region.key); it != prev_by_key.end()) {
++            if (index < it->second.size()) {
++                prev = it->second[index];
++            }
++        }
++        matched += prev != nullptr;
++        const auto& viewport = region.state.viewport;
++        entries.push_back(RegionEntry{
++            .constants =
++                {
++                    .cur_offset = region.offset / 4u,
++                    .prev_offset = prev ? prev->offset / 4u : 0u,
++                    .prev_max_vertices = prev ? prev->max_vertices : 0u,
++                    .has_prev = prev && !region.blended ? 1u : 0u,
++                    .viewport_size = {viewport.width, viewport.height},
++                    .viewport_offset = {viewport.x, viewport.y},
++                    .depth_range = {viewport.minDepth, viewport.maxDepth},
++                    .blended = region.blended ? 1u : 0u,
++                    .negative_one_to_one =
++                        region.state.negative_one_to_one && clip_control ? 1u : 0u,
++                },
++            .counter_offset = region.counter_offset,
++            .pad = {},
++        });
++        draws.push_back(&region);
++    }
++    const u64 scene_draws = draws.size();
++
++    // Last frame's reads of the region table, camera sums and camera result come first.
++    const vk::MemoryBarrier2 reuse_barrier{
++        .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader |
++                        vk::PipelineStageFlagBits2::eFragmentShader,
++        .srcAccessMask =
++            vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite,
++        .dstStageMask =
++            vk::PipelineStageFlagBits2::eTransfer | vk::PipelineStageFlagBits2::eComputeShader,
++        .dstAccessMask = vk::AccessFlagBits2::eTransferWrite |
++                         vk::AccessFlagBits2::eShaderStorageRead |
++                         vk::AccessFlagBits2::eShaderStorageWrite,
++    };
++    cmdbuf.pipelineBarrier2(vk::DependencyInfo{
++        .memoryBarrierCount = 1,
++        .pMemoryBarriers = &reuse_barrier,
++    });
++
++    // vkCmdUpdateBuffer takes at most 65536 bytes per call.
++    constexpr size_t EntriesPerUpdate = 65536 / sizeof(RegionEntry);
++    for (size_t first = 0; first < entries.size(); first += EntriesPerUpdate) {
++        const size_t count = std::min(EntriesPerUpdate, entries.size() - first);
++        cmdbuf.updateBuffer(region_table.Handle(), first * sizeof(RegionEntry),
++                            count * sizeof(RegionEntry),
++                            static_cast<const void*>(entries.data() + first));
++    }
++
++    const std::array buffer_barriers = {
++        vk::BufferMemoryBarrier2{
++            .srcStageMask = vk::PipelineStageFlagBits2::eTransformFeedbackEXT,
++            .srcAccessMask = vk::AccessFlagBits2::eTransformFeedbackWriteEXT,
++            .dstStageMask = vk::PipelineStageFlagBits2::eVertexShader |
++                            vk::PipelineStageFlagBits2::eComputeShader,
++            .dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead,
++            .buffer = capture.CurrentBuffer(),
++            .offset = 0,
++            .size = vk::WholeSize,
++        },
++        vk::BufferMemoryBarrier2{
++            .srcStageMask = vk::PipelineStageFlagBits2::eTransformFeedbackEXT,
++            .srcAccessMask = vk::AccessFlagBits2::eTransformFeedbackWriteEXT,
++            .dstStageMask = vk::PipelineStageFlagBits2::eVertexShader |
++                            vk::PipelineStageFlagBits2::eComputeShader,
++            .dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead,
++            .buffer = capture.PreviousBuffer(),
++            .offset = 0,
++            .size = vk::WholeSize,
++        },
++        vk::BufferMemoryBarrier2{
++            .srcStageMask = vk::PipelineStageFlagBits2::eTransformFeedbackEXT,
++            .srcAccessMask = vk::AccessFlagBits2::eTransformFeedbackCounterWriteEXT,
++            .dstStageMask = vk::PipelineStageFlagBits2::eDrawIndirect |
++                            vk::PipelineStageFlagBits2::eComputeShader,
++            .dstAccessMask = vk::AccessFlagBits2::eTransformFeedbackCounterReadEXT |
++                             vk::AccessFlagBits2::eShaderStorageRead,
++            .buffer = capture.CurrentCounters(),
++            .offset = 0,
++            .size = vk::WholeSize,
++        },
++        vk::BufferMemoryBarrier2{
++            .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
++            .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
++            .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
++            .dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead,
++            .buffer = region_table.Handle(),
++            .offset = 0,
++            .size = vk::WholeSize,
++        },
++    };
++    const auto target_barrier = [](vk::Image image) {
++        return vk::ImageMemoryBarrier2{
++            .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput |
++                            vk::PipelineStageFlagBits2::eFragmentShader |
++                            vk::PipelineStageFlagBits2::eComputeShader,
++            .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite |
++                             vk::AccessFlagBits2::eShaderSampledRead,
++            .dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
++            .dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
++            .oldLayout = vk::ImageLayout::eUndefined,
++            .newLayout = vk::ImageLayout::eColorAttachmentOptimal,
++            .image = image,
++            .subresourceRange{
++                .aspectMask = vk::ImageAspectFlagBits::eColor,
++                .levelCount = 1,
++                .layerCount = 1,
++            },
++        };
++    };
++    const std::array image_barriers = {target_barrier(motion_target), target_barrier(mask_target)};
++    cmdbuf.pipelineBarrier2(vk::DependencyInfo{
++        .bufferMemoryBarrierCount = static_cast<u32>(buffer_barriers.size()),
++        .pBufferMemoryBarriers = buffer_barriers.data(),
++        .imageMemoryBarrierCount = static_cast<u32>(image_barriers.size()),
++        .pImageMemoryBarriers = image_barriers.data(),
++    });
++
++    SolveCamera(cmdbuf, capture, static_cast<u32>(entries.size()));
++
++    const std::array color_attachments = {
++        vk::RenderingAttachmentInfo{
++            .imageView = motion_target_view,
++            .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
++            .loadOp = vk::AttachmentLoadOp::eClear,
++            .storeOp = vk::AttachmentStoreOp::eStore,
++            .clearValue =
++                vk::ClearValue{
++                    .color = vk::ClearColorValue{.float32 = std::array{0.0f, 0.0f, 0.0f, 0.0f}}},
++        },
++        vk::RenderingAttachmentInfo{
++            .imageView = mask_target_view,
++            .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
++            .loadOp = vk::AttachmentLoadOp::eClear,
++            .storeOp = vk::AttachmentStoreOp::eStore,
++            .clearValue =
++                vk::ClearValue{
++                    .color = vk::ClearColorValue{.float32 = std::array{1.0f, 0.0f, 0.0f, 0.0f}}},
++        },
++    };
++    const vk::RenderingAttachmentInfo depth_attachment{
++        .imageView = main->depth_view,
++        .imageLayout = depth_layout,
++        .loadOp = vk::AttachmentLoadOp::eLoad,
++        .storeOp = vk::AttachmentStoreOp::eNone,
++    };
++    cmdbuf.beginRendering(vk::RenderingInfo{
++        .renderArea = {.offset = {0, 0}, .extent = size},
++        .layerCount = 1,
++        .colorAttachmentCount = static_cast<u32>(color_attachments.size()),
++        .pColorAttachments = color_attachments.data(),
++        .pDepthAttachment = &depth_attachment,
++    });
++
++    const std::array buffer_infos = {
++        vk::DescriptorBufferInfo{capture.CurrentBuffer(), 0, vk::WholeSize},
++        vk::DescriptorBufferInfo{capture.PreviousBuffer(), 0, vk::WholeSize},
++        vk::DescriptorBufferInfo{camera_result.Handle(), 0, vk::WholeSize},
++    };
++    std::array<vk::WriteDescriptorSet, 3> set_writes{};
++    for (u32 i = 0; i < set_writes.size(); ++i) {
++        set_writes[i] = vk::WriteDescriptorSet{
++            .dstBinding = i,
++            .descriptorCount = 1,
++            .descriptorType = vk::DescriptorType::eStorageBuffer,
++            .pBufferInfo = &buffer_infos[i],
++        };
++    }
++
++    vk::Pipeline bound_pipeline{};
++    for (size_t i = 0; i < draws.size(); ++i) {
++        const auto& region = *draws[i];
++        const PipelineKey key{
++            .depth_format = region.depth_format,
++            .samples = region.samples,
++            .depth_clamp = region.state.depth_clamp,
++            .depth_clip = region.state.depth_clip,
++            .negative_one_to_one = region.state.negative_one_to_one,
++        };
++        const vk::Pipeline pipeline = GetPipeline(key);
++        if (pipeline != bound_pipeline) {
++            cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline);
++            cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eGraphics, *pipeline_layout, 0,
++                                        set_writes);
++            bound_pipeline = pipeline;
++        }
++
++        const auto& state = region.state;
++        cmdbuf.setViewportWithCount(state.viewport);
++        cmdbuf.setScissorWithCount(state.scissor);
++        cmdbuf.setCullMode(state.cull_mode);
++        cmdbuf.setFrontFace(state.front_face);
++        cmdbuf.setDepthBiasEnable(state.depth_bias_enabled);
++        cmdbuf.setDepthBias(state.depth_bias_constant, state.depth_bias_clamp,
++                            state.depth_bias_slope);
++        cmdbuf.pushConstants(*pipeline_layout,
++                             vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
++                             0, sizeof(PushConstants), &entries[i].constants);
++
++        // Counter is relative to the bound range, which already starts at the region.
++        cmdbuf.drawIndirectByteCountEXT(1, 0, capture.CurrentCounters(), region.counter_offset, 0,
++                                        Shader::XfbVertexStride);
++    }
++
++    cmdbuf.endRendering();
++    if (multisampled) {
++        Resolve(cmdbuf);
++    }
++
++    // Sampled as depth: a R32F view of a depth format resolves to the depth aspect.
++    VideoCore::ImageViewInfo depth_view_info{};
++    depth_view_info.format = vk::Format::eR32Sfloat;
++    CopyDepth(cmdbuf, *depth_image.FindView(depth_view_info, false).image_view, depth_layout);
++
++    const vk::ImageSubresourceRange color_range{
++        .aspectMask = vk::ImageAspectFlagBits::eColor,
++        .levelCount = 1,
++        .layerCount = 1,
++    };
++    const std::array outputs_barriers = {
++        vk::ImageMemoryBarrier2{
++            .srcStageMask = multisampled ? vk::PipelineStageFlagBits2::eComputeShader
++                                         : vk::PipelineStageFlagBits2::eColorAttachmentOutput,
++            .srcAccessMask = multisampled ? vk::AccessFlagBits2::eShaderStorageWrite
++                                          : vk::AccessFlagBits2::eColorAttachmentWrite,
++            .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
++            .dstAccessMask = vk::AccessFlagBits2::eMemoryRead,
++            .oldLayout =
++                multisampled ? vk::ImageLayout::eGeneral : vk::ImageLayout::eColorAttachmentOptimal,
++            .newLayout = vk::ImageLayout::eGeneral,
++            .image = motion_image,
++            .subresourceRange = color_range,
++        },
++        vk::ImageMemoryBarrier2{
++            .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
++            .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
++            .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
++            .dstAccessMask = vk::AccessFlagBits2::eMemoryRead,
++            .oldLayout = vk::ImageLayout::eGeneral,
++            .newLayout = vk::ImageLayout::eGeneral,
++            .image = depth_out,
++            .subresourceRange = color_range,
++        },
++    };
++    cmdbuf.pipelineBarrier2(vk::DependencyInfo{
++        .imageMemoryBarrierCount = static_cast<u32>(outputs_barriers.size()),
++        .pImageMemoryBarriers = outputs_barriers.data(),
++    });
++    outputs_valid = true;
++    scheduler.GetDynamicState().Invalidate();
++
++    window_draws += scene_draws;
++    window_matched += matched;
++    if (++frames >= ReportInterval) {
++        LOG_INFO(Render_Vulkan,
++                 "xfb velocity: frames={} scene_draws/frame={:.1f} matched={:.2f}% depth={}x{} "
++                 "output={}x{}",
++                 frames, double(window_draws) / double(frames),
++                 100.0 * double(window_matched) / double(std::max<u64>(window_draws, 1)),
++                 size.width, size.height, output_extent.width, output_extent.height);
++        frames = 0;
++        window_draws = 0;
++        window_matched = 0;
++    }
++}
++
++} // namespace Vulkan::HostPasses
+diff --git a/src/video_core/renderer_vulkan/host_passes/xfb_velocity_pass.h b/src/video_core/renderer_vulkan/host_passes/xfb_velocity_pass.h
+new file mode 100644
+index 0000000..b2744e6
+--- /dev/null
++++ b/src/video_core/renderer_vulkan/host_passes/xfb_velocity_pass.h
+@@ -0,0 +1,164 @@
++// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#pragma once
++
++#include <array>
++#include <optional>
++#include <unordered_map>
++#include <vector>
++#include "common/types.h"
++#include "video_core/buffer_cache/buffer.h"
++#include "video_core/renderer_vulkan/vk_common.h"
++#include "video_core/texture_cache/image.h"
++
++namespace VideoCore {
++class TextureCache;
++class XfbCapture;
++} // namespace VideoCore
++
++namespace Vulkan {
++class Instance;
++class Runtime;
++class Scheduler;
++} // namespace Vulkan
++
++namespace Vulkan::HostPasses {
++
++// Rasterizes per-vertex motion between two frames of transform feedback captures into a motion
++// vector target, using the scene depth with an EQUAL test so only visible surfaces write.
++class XfbVelocityPass {
++public:
++    XfbVelocityPass(const Instance& instance, Scheduler& scheduler, Runtime& runtime,
++                    VideoCore::TextureCache& texture_cache);
++    ~XfbVelocityPass();
++
++    void Render(const VideoCore::XfbCapture& capture, vk::Extent2D output_extent);
++
++    // Single-sample motion (RG16F, pixels) and depth (R32F) of the last rendered frame, both in
++    // eGeneral. Empty until a frame was rendered.
++    struct Outputs {
++        vk::Image motion;
++        vk::ImageView motion_view;
++        vk::Image depth;
++        vk::ImageView depth_view;
++        vk::Extent2D size;
++    };
++    std::optional<Outputs> FrameOutputs() const;
++
++    [[nodiscard]] vk::Extent2D Size() const noexcept {
++        return size;
++    }
++
++private:
++    struct PipelineKey {
++        vk::Format depth_format;
++        vk::SampleCountFlagBits samples;
++        bool depth_clamp;
++        bool depth_clip;
++        bool negative_one_to_one;
++
++        bool operator==(const PipelineKey&) const = default;
++    };
++
++    struct PipelineKeyHash {
++        size_t operator()(const PipelineKey& key) const noexcept;
++    };
++
++    // Mirrors the push constant block of xfb_velocity.vert and xfb_velocity.frag.
++    struct PushConstants {
++        u32 cur_offset;
++        u32 prev_offset;
++        u32 prev_max_vertices;
++        u32 has_prev;
++        std::array<float, 2> viewport_size;
++        std::array<float, 2> viewport_offset;
++        std::array<float, 2> depth_range;
++        u32 blended;
++        u32 negative_one_to_one;
++    };
++    static_assert(sizeof(PushConstants) == 48);
++
++    // Mirrors Region in xfb_camera_sums.comp.
++    struct RegionEntry {
++        PushConstants constants;
++        u32 counter_offset;
++        std::array<u32, 3> pad;
++    };
++    static_assert(sizeof(RegionEntry) == 64);
++
++    vk::Pipeline GetPipeline(const PipelineKey& key);
++    void ResizeTargets(u32 width, u32 height, vk::SampleCountFlagBits samples);
++    void Resolve(vk::CommandBuffer cmdbuf);
++    void CopyDepth(vk::CommandBuffer cmdbuf, vk::ImageView depth_view, vk::ImageLayout layout);
++    void CreateCameraPipelines();
++    void SolveCamera(vk::CommandBuffer cmdbuf, const VideoCore::XfbCapture& capture, u32 count);
++
++    const Instance& instance;
++    Scheduler& scheduler;
++    Runtime& runtime;
++    VideoCore::TextureCache& texture_cache;
++
++    vk::ShaderModule vertex_module;
++    vk::ShaderModule fragment_module;
++    vk::UniqueDescriptorSetLayout desc_set_layout;
++    vk::UniquePipelineLayout pipeline_layout;
++    std::unordered_map<PipelineKey, vk::UniquePipeline, PipelineKeyHash> pipelines;
++
++    vk::ShaderModule resolve_module;
++    vk::UniqueDescriptorSetLayout resolve_set_layout;
++    vk::UniquePipelineLayout resolve_layout;
++    vk::UniquePipeline resolve_pipeline;
++
++    vk::ShaderModule camera_sums_module;
++    vk::ShaderModule camera_hypotheses_module;
++    vk::ShaderModule camera_solve_module;
++    vk::UniqueDescriptorSetLayout camera_sums_set_layout;
++    vk::UniqueDescriptorSetLayout camera_hypotheses_set_layout;
++    vk::UniqueDescriptorSetLayout camera_solve_set_layout;
++    vk::UniquePipelineLayout camera_sums_layout;
++    vk::UniquePipelineLayout camera_hypotheses_layout;
++    vk::UniquePipelineLayout camera_solve_layout;
++    vk::UniquePipeline camera_sums_pipeline;
++    vk::UniquePipeline camera_hypotheses_pipeline;
++    vk::UniquePipeline camera_solve_pipeline;
++    bool camera_supported{};
++
++    // One entry per velocity draw, in issue order. Read by the camera solve and by capture tools.
++    VideoCore::Buffer region_table;
++    // Per-region normal equations for the camera solve, in doubles.
++    VideoCore::Buffer camera_sums;
++    // Candidate transforms fitted to random region samples, with their inlier counts.
++    VideoCore::Buffer camera_hypotheses;
++    // Solved clip to previous clip transform and its statistics.
++    VideoCore::Buffer camera_result;
++    std::vector<RegionEntry> entries;
++
++    vk::Extent2D size{};
++    VideoCore::UniqueImage motion_image;
++    vk::UniqueImageView motion_view;
++    VideoCore::UniqueImage mask_image;
++    vk::UniqueImageView mask_view;
++    // Multisampled render targets when the scene depth is multisampled, resolved into the above.
++    VideoCore::UniqueImage motion_ms_image;
++    vk::UniqueImageView motion_ms_view;
++    VideoCore::UniqueImage mask_ms_image;
++    vk::UniqueImageView mask_ms_view;
++    VideoCore::UniqueImage depth_out;
++    vk::UniqueImageView depth_out_view;
++    vk::ShaderModule depth_copy_module;
++    vk::ShaderModule depth_copy_ms_module;
++    vk::UniqueDescriptorSetLayout depth_copy_set_layout;
++    vk::UniquePipelineLayout depth_copy_layout;
++    vk::UniquePipeline depth_copy_pipeline;
++    vk::UniquePipeline depth_copy_ms_pipeline;
++    bool outputs_valid{};
++    vk::SampleCountFlagBits samples{vk::SampleCountFlagBits::e1};
++    bool targets_initialized{};
++
++    u32 frames{};
++    u64 window_draws{};
++    u64 window_matched{};
++};
++
++} // namespace Vulkan::HostPasses
+diff --git a/src/video_core/renderer_vulkan/vk_instance.cpp b/src/video_core/renderer_vulkan/vk_instance.cpp
+index e608728..6a23fb0 100644
+--- a/src/video_core/renderer_vulkan/vk_instance.cpp
++++ b/src/video_core/renderer_vulkan/vk_instance.cpp
+@@ -10,7 +10,11 @@
+ #include "common/types.h"
+ #include "imgui/renderer/imgui_core.h"
+ #include "sdl_window.h"
++#include <algorithm>
++#include <cstring>
++#include "core/emulator_settings.h"
+ #include "video_core/renderdoc.h"
++#include "video_core/renderer_vulkan/host_passes/dlss_pass.h"
+ #include "video_core/renderer_vulkan/liverpool_to_vk.h"
+ #include "video_core/renderer_vulkan/vk_instance.h"
+ #include "video_core/renderer_vulkan/vk_platform.h"
+@@ -238,7 +242,7 @@ bool Instance::CreateDevice() {
+         return false;
+     }
+ 
+-    boost::container::static_vector<const char*, 32> enabled_extensions;
++    boost::container::static_vector<const char*, 64> enabled_extensions;
+     const auto add_extension = [&](std::string_view extension) -> bool {
+         const auto result =
+             std::find_if(available_extensions.begin(), available_extensions.end(),
+@@ -317,6 +321,31 @@ bool Instance::CreateDevice() {
+             add_extension(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME);
+     }
+     provoking_vertex = add_extension(VK_EXT_PROVOKING_VERTEX_EXTENSION_NAME);
++    transform_feedback = add_extension(VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME);
++    // NGX lists the extensions DLSS needs; they are fixed at device creation.
++    if (EmulatorSettings.IsDlssEnabled()) {
++        for (const char* extension : HostPasses::DlssPass::RequiredDeviceExtensions()) {
++            const bool already =
++                std::ranges::any_of(enabled_extensions, [extension](const char* enabled) {
++                    return std::strcmp(enabled, extension) == 0;
++                });
++            // Core 1.2 bufferDeviceAddress is already on, and the spec forbids enabling the EXT
++            // form alongside it.
++            const bool core_promoted =
++                std::strcmp(extension, VK_EXT_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME) == 0 ||
++                std::strcmp(extension, VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME) == 0;
++            if (!already && !core_promoted &&
++                enabled_extensions.size() < enabled_extensions.capacity()) {
++                add_extension(extension);
++            }
++        }
++    }
++    if (transform_feedback) {
++        const auto chain =
++            physical_device.getProperties2<vk::PhysicalDeviceProperties2,
++                                           vk::PhysicalDeviceTransformFeedbackPropertiesEXT>();
++        transform_feedback_props = chain.get<vk::PhysicalDeviceTransformFeedbackPropertiesEXT>();
++    }
+     shader_stencil_export = add_extension(VK_EXT_SHADER_STENCIL_EXPORT_EXTENSION_NAME);
+     image_load_store_lod = add_extension(VK_AMD_SHADER_IMAGE_LOAD_STORE_LOD_EXTENSION_NAME);
+     amd_gcn_shader = add_extension(VK_AMD_GCN_SHADER_EXTENSION_NAME);
+@@ -503,6 +532,9 @@ bool Instance::CreateDevice() {
+         vk::PhysicalDeviceProvokingVertexFeaturesEXT{
+             .provokingVertexLast = true,
+         },
++        vk::PhysicalDeviceTransformFeedbackFeaturesEXT{
++            .transformFeedback = true,
++        },
+         vk::PhysicalDeviceVertexAttributeDivisorFeatures{
+             .vertexAttributeInstanceRateDivisor = true,
+         },
+@@ -578,6 +610,9 @@ bool Instance::CreateDevice() {
+     if (!maintenance_6) {
+         device_chain.unlink<vk::PhysicalDeviceMaintenance6FeaturesKHR>();
+     }
++    if (!transform_feedback) {
++        device_chain.unlink<vk::PhysicalDeviceTransformFeedbackFeaturesEXT>();
++    }
+     if (!maintenance_8) {
+         device_chain.unlink<vk::PhysicalDeviceMaintenance8FeaturesKHR>();
+     }
+diff --git a/src/video_core/renderer_vulkan/vk_instance.h b/src/video_core/renderer_vulkan/vk_instance.h
+index 40e27c0..45d4596 100644
+--- a/src/video_core/renderer_vulkan/vk_instance.h
++++ b/src/video_core/renderer_vulkan/vk_instance.h
+@@ -198,6 +198,16 @@ public:
+         return provoking_vertex;
+     }
+ 
++    /// Returns true when VK_EXT_transform_feedback is supported.
++    bool IsTransformFeedbackSupported() const {
++        return transform_feedback;
++    }
++
++    /// Returns true when vkCmdDrawIndirectByteCountEXT is supported.
++    bool IsTransformFeedbackDrawSupported() const {
++        return transform_feedback && transform_feedback_props.transformFeedbackDraw;
++    }
++
+     /// Returns true when VK_AMD_shader_image_load_store_lod is supported.
+     bool IsImageLoadStoreLodSupported() const {
+         return image_load_store_lod;
+@@ -537,6 +547,8 @@ private:
+     bool vertex_input_dynamic_state{};
+     bool list_restart{};
+     bool provoking_vertex{};
++    bool transform_feedback{};
++    vk::PhysicalDeviceTransformFeedbackPropertiesEXT transform_feedback_props{};
+     bool shader_stencil_export{};
+     bool image_load_store_lod{};
+     bool amd_gcn_shader{};
+diff --git a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+index f2dea0a..7b20a26 100644
+--- a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+@@ -8,6 +8,7 @@
+ #include "common/path_util.h"
+ #include "core/debug_state.h"
+ #include "core/emulator_settings.h"
++#include "video_core/xfb_capture.h"
+ #include "shader_recompiler/backend/spirv/emit_spirv.h"
+ #include "shader_recompiler/info.h"
+ #include "shader_recompiler/recompiler.h"
+@@ -331,6 +332,8 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
+         .supports_shader_stencil_export = instance_.IsShaderStencilExportSupported(),
+         .fast_shader_math = EmulatorSettings.IsFastShaderMath(),
+         .support_bda = instance_.IsBufferDeviceAddressSupported(),
++        .supports_transform_feedback =
++            instance_.IsTransformFeedbackSupported() && VideoCore::DlssInputsWanted(),
+     };
+     WarmUp();
+ 
+diff --git a/src/video_core/renderer_vulkan/vk_platform.cpp b/src/video_core/renderer_vulkan/vk_platform.cpp
+index 864a7ca..a4bc887 100644
+--- a/src/video_core/renderer_vulkan/vk_platform.cpp
++++ b/src/video_core/renderer_vulkan/vk_platform.cpp
+@@ -20,6 +20,7 @@
+ #include "common/logging/log.h"
+ #include "common/path_util.h"
+ #include "core/emulator_settings.h"
++#include "video_core/renderer_vulkan/host_passes/dlss_pass.h"
+ #include "sdl_window.h"
+ #include "video_core/renderer_vulkan/vk_platform.h"
+ 
+@@ -204,6 +205,16 @@ std::vector<const char*> GetInstanceExtensions(Frontend::WindowSystemType window
+         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+     }
+ 
++    if (EmulatorSettings.IsDlssEnabled()) {
++        for (const char* extension : HostPasses::DlssPass::RequiredInstanceExtensions()) {
++            if (std::ranges::none_of(extensions, [extension](const char* added) {
++                    return std::strcmp(added, extension) == 0;
++                })) {
++                extensions.push_back(extension);
++            }
++        }
++    }
++
+     // Sanitize extension list
+     std::erase_if(extensions, [&](const char* extension) -> bool {
+         const auto it =
+diff --git a/src/video_core/renderer_vulkan/vk_presenter.cpp b/src/video_core/renderer_vulkan/vk_presenter.cpp
+index daec351..cb61bd4 100644
+--- a/src/video_core/renderer_vulkan/vk_presenter.cpp
++++ b/src/video_core/renderer_vulkan/vk_presenter.cpp
+@@ -665,6 +665,10 @@ static vk::Format GetFrameViewFormat(const Libraries::VideoOut::PixelFormat form
+ 
+ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& attribute,
+                                VAddr cpu_address) {
++    // The flip is the frame boundary in the guest command stream: every draw before it belongs to
++    // the frame being presented.
++    rasterizer->EndXfbFrame({attribute.attrib.width, attribute.attrib.height});
++
+     auto desc = VideoCore::TextureCache::ImageDesc{attribute, cpu_address};
+     const auto image_id = texture_cache.FindImage(desc);
+     texture_cache.UpdateImage(image_id);
+@@ -734,12 +738,19 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup&
+         runtime.DownloadImage(&image, &readback.buffer, std::span{&copy_region, 1});
+     }
+ 
++
+     // Continue with host-side passes that draw the displayed (scaled) frame.
+ 
+     runtime.Transit(&image, vk::ImageLayout::eShaderReadOnlyOptimal,
+                     vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderRead);
+     runtime.FlushBarriers();
+ 
++    // DLSS (or its debug view) replaces the guest frame at the same size; FSR and the post
++    // process pass then run on its output as they would on the frame.
++    if (const auto dlss_view = rasterizer->EvaluateDlss(image, view_info.format)) {
++        image_view = dlss_view;
++    }
++
+     image_view = fsr_pass.Render(cmdbuf, image_view, image_size, {frame->width, frame->height},
+                                  fsr_settings, frame->is_hdr);
+ 
+@@ -768,6 +779,10 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup&
+ }
+ 
+ Frame* Presenter::PrepareBlankFrame(bool present_thread) {
++    if (!present_thread) {
++        rasterizer->EndXfbFrame({});
++    }
++
+     // Request a free presentation frame.
+     Frame* frame = GetRenderFrame();
+ 
+diff --git a/src/video_core/renderer_vulkan/vk_rasterizer.cpp b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+index 1a17374..fdba81b 100644
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+@@ -1,12 +1,16 @@
+ // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
++#include <algorithm>
++#include <limits>
+ #include "common/debug.h"
++#include "common/hash.h"
+ #include "core/debug_state.h"
+ #include "core/emulator_settings.h"
+ #include "core/memory.h"
+ #include "shader_recompiler/resource.h"
+ #include "shader_recompiler/runtime_info.h"
++#include "shader_recompiler/xfb_layout.h"
+ #include "video_core/amdgpu/liverpool.h"
+ #include "video_core/buffer_cache/buffer.h"
+ #include "video_core/buffer_cache/buffer_cache.h"
+@@ -35,6 +39,84 @@ static Shader::PushData MakeUserData(const AmdGpu::Regs& regs) {
+     return push_data;
+ }
+ 
++namespace {
++
++// Transform feedback writes every vertex of every assembled primitive, so strips and fans
++// expand beyond their index count.
++u32 XfbMaxVertices(AmdGpu::PrimitiveType type, u32 count, u32 instances) {
++    u32 per_index = 3;
++    switch (type) {
++    case AmdGpu::PrimitiveType::PointList:
++    case AmdGpu::PrimitiveType::LineList:
++    case AmdGpu::PrimitiveType::TriangleList:
++        per_index = 1;
++        break;
++    case AmdGpu::PrimitiveType::LineStrip:
++    case AmdGpu::PrimitiveType::LineLoop:
++        per_index = 2;
++        break;
++    default:
++        break;
++    }
++    const u64 total = u64(count) * per_index * instances;
++    return static_cast<u32>(std::min<u64>(total, std::numeric_limits<u32>::max()));
++}
++
++bool IsXfbCapturable(const GraphicsPipeline& pipeline, const Shader::Profile& profile,
++                     AmdGpu::PrimitiveType type) {
++    // Captures are replayed as triangle lists.
++    if (type != AmdGpu::PrimitiveType::TriangleList &&
++        type != AmdGpu::PrimitiveType::TriangleStrip &&
++        type != AmdGpu::PrimitiveType::TriangleFan) {
++        return false;
++    }
++    const auto stages = pipeline.GetStages();
++    if (stages[u32(Shader::SwStage::Geometry)] ||
++        stages[u32(Shader::SwStage::TessellationControl)] ||
++        stages[u32(Shader::SwStage::TessellationEval)]) {
++        return false;
++    }
++    const auto* vs_info = stages[u32(Shader::SwStage::Vertex)];
++    return vs_info && Shader::XfbCaptureEnabled(*vs_info, profile, false);
++}
++
++// Blended draws that don't write depth don't own motion vectors; the surface under them does.
++// Those that do own their pixels, flagged untrusted, like a reactive mask.
++bool IsXfbBlended(const GraphicsPipelineKey& key) {
++    using BlendControl = AmdGpu::BlendControl;
++    for (u32 i = 0; i < key.num_color_attachments; ++i) {
++        const auto& control = key.blend_controls[i];
++        if (!control.enable || !key.write_masks[i]) {
++            continue;
++        }
++        if (control.color_src_factor != BlendControl::BlendFactor::One ||
++            control.color_dst_factor != BlendControl::BlendFactor::Zero ||
++            control.color_func != BlendControl::BlendFunc::Add) {
++            return true;
++        }
++    }
++    return false;
++}
++
++// Geometry identity: vertex stream addresses, index range and topology. Deliberately excludes
++// constant buffer pointers, which many engines rotate every frame.
++u64 XfbDrawKey(const Shader::Info& vs_info,
++               const std::optional<const Shader::Gcn::FetchShaderData>& fetch_shader,
++               VAddr index_base, u32 vertex_offset, u32 num_indices, AmdGpu::PrimitiveType type) {
++    u64 key = vs_info.pgm_hash;
++    key = HashCombine(key, u64(index_base));
++    key = HashCombine(key, u64(vertex_offset) | (u64(num_indices) << 32));
++    key = HashCombine(key, u64(type));
++    if (fetch_shader) {
++        for (const auto& attrib : fetch_shader->attributes) {
++            key = HashCombine(key, u64(attrib.GetSharp(vs_info).base_address));
++        }
++    }
++    return key;
++}
++
++} // Anonymous namespace
++
+ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime& runtime_,
+                        AmdGpu::Liverpool* liverpool_)
+     : instance{instance_}, scheduler{scheduler_}, runtime{runtime_}, page_manager{this},
+@@ -45,6 +127,24 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
+       host_markers_enabled{EmulatorSettings.IsVkHostMarkersEnabled()},
+       guest_markers_enabled{EmulatorSettings.IsVkGuestMarkersEnabled()},
+       submit_draw_interval{EmulatorSettings.GetSubmitDrawInterval()} {
++    // Motion vectors cost a transform feedback copy of every scene draw, so they are captured
++    // only when DLSS or its debug view asks for them.
++    const bool dlss_inputs = VideoCore::DlssInputsWanted();
++    if (dlss_inputs && instance.IsTransformFeedbackSupported()) {
++        xfb_capture.emplace(instance);
++        if (instance.IsTransformFeedbackDrawSupported()) {
++            xfb_velocity.emplace(instance, scheduler, runtime, texture_cache);
++            dlss.emplace(instance);
++            jitter_enabled = EmulatorSettings.IsDlssEnabled() && EmulatorSettings.IsDlssJitter() &&
++                             HostPasses::DlssPass::IsBuiltIn();
++        }
++    }
++    if (dlss_inputs) {
++        LOG_INFO(Render_Vulkan, "DLSS: inputs {}, motion vectors {}, jitter {}, NGX built in {}",
++                 xfb_capture ? "captured" : "unavailable (no transform feedback)",
++                 xfb_velocity ? "on" : "off", jitter_enabled ? "on" : "off",
++                 HostPasses::DlssPass::IsBuiltIn());
++    }
+     if (!EmulatorSettings.IsNullGPU()) {
+         liverpool->BindRasterizer(this);
+     }
+@@ -216,7 +316,9 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
+     }
+ 
+     pipeline->BindResources(set_writes, push_data);
++    jitter_this_draw = jitter_enabled && ShouldJitterDraw(state);
+     UpdateDynamicState(pipeline, is_indexed);
++    jitter_this_draw = false;
+     scheduler.BeginRendering(state);
+ 
+     const auto& vs_info = pipeline->GetStage(Shader::SwStage::Vertex);
+@@ -226,6 +328,58 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
+     const auto cmdbuf = scheduler.CommandBuffer();
+     cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->Handle());
+ 
++    bool capturing = false;
++    const auto& gkey = pipeline->GetGraphicsKey();
++    const auto& dyn = scheduler.GetDynamicState();
++    if (xfb_capture && gkey.polygon_mode == AmdGpu::PolygonMode::Fill &&
++        state.depth_stencil_attachment.has_depth && !dyn.viewports.empty() &&
++        !dyn.scissors.empty() &&
++        IsXfbCapturable(*pipeline, pipeline_cache.GetProfile(), regs.primitive_type)) {
++        const auto& depth_image = texture_cache.GetImage(db_desc.image_id);
++        // A depth prepass holds the scene depth bit for bit; its color pass may not.
++        const bool scene_depth_only =
++            gkey.mrt_mask == 0 && dyn.depth_write_enabled &&
++            VideoCore::XfbMatchesAspect(depth_image.info.size.width, depth_image.info.size.height,
++                                        xfb_output_extent);
++        const bool owns_motion = !IsXfbBlended(gkey) || dyn.depth_write_enabled;
++        if ((gkey.mrt_mask != 0 && owns_motion) || scene_depth_only) {
++            const VAddr index_base = is_indexed ? regs.index_base_address.Address<VAddr>() : 0;
++            const VideoCore::XfbRegion region{
++                .key = XfbDrawKey(vs_info, fetch_shader, index_base, vertex_offset,
++                                  regs.num_indices, regs.primitive_type),
++                .offset = 0,
++                .max_vertices = XfbMaxVertices(regs.primitive_type, regs.num_indices,
++                                               regs.num_instances.NumInstances()),
++                .counter_offset = 0,
++                .depth_id = db_desc.image_id,
++                .depth_image = depth_image.GetImage(),
++                .depth_view = state.depth_stencil_attachment.image_view,
++                .depth_format = depth_image.info.pixel_format,
++                .has_stencil = depth_image.info.props.has_stencil != 0,
++                .samples = depth_image.backing ? depth_image.backing->image.image_ci.samples
++                                               : vk::SampleCountFlagBits::e1,
++                .blended = gkey.mrt_mask != 0 && IsXfbBlended(gkey),
++                .width = depth_image.info.size.width,
++                .height = depth_image.info.size.height,
++                .state =
++                    {
++                        .viewport = dyn.viewports[0],
++                        .scissor = dyn.scissors[0],
++                        .cull_mode = dyn.cull_mode,
++                        .front_face = dyn.front_face,
++                        .depth_bias_constant = dyn.depth_bias_constant,
++                        .depth_bias_clamp = dyn.depth_bias_clamp,
++                        .depth_bias_slope = dyn.depth_bias_slope,
++                        .depth_bias_enabled = dyn.depth_bias_enabled,
++                        .depth_clamp = gkey.depth_clamp_enable != 0,
++                        .depth_clip = gkey.depth_clip_enable != 0,
++                        .negative_one_to_one = gkey.clip_space == AmdGpu::ClipSpace::MinusWToW,
++                    },
++            };
++            capturing = xfb_capture->Begin(cmdbuf, region);
++        }
++    }
++
+     if (is_indexed) {
+         cmdbuf.drawIndexed(regs.num_indices, regs.num_instances.NumInstances(), 0,
+                            s32(vertex_offset), instance_offset);
+@@ -233,6 +387,9 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
+         cmdbuf.draw(regs.num_indices, regs.num_instances.NumInstances(), vertex_offset,
+                     instance_offset);
+     }
++    if (capturing) {
++        xfb_capture->End(cmdbuf);
++    }
+     DebugState.IncDrawCall();
+ 
+     ResetBindings(false);
+@@ -290,7 +447,9 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
+     }
+ 
+     pipeline->BindResources(set_writes, push_data);
++    jitter_this_draw = jitter_enabled && ShouldJitterDraw(state);
+     UpdateDynamicState(pipeline, is_indexed);
++    jitter_this_draw = false;
+     scheduler.BeginRendering(state);
+ 
+     const auto cmdbuf = scheduler.CommandBuffer();
+@@ -416,6 +575,140 @@ void Rasterizer::Finish() {
+     scheduler.Finish();
+ }
+ 
++namespace {
++
++float Halton(u32 index, u32 base) {
++    float f = 1.0f;
++    float result = 0.0f;
++    for (u32 i = index; i > 0; i /= base) {
++        f /= static_cast<float>(base);
++        result += f * static_cast<float>(i % base);
++    }
++    return result;
++}
++
++} // Anonymous namespace
++
++bool Rasterizer::ShouldJitterDraw(const RenderState& state) {
++    const auto& regs = liverpool->regs;
++    if (regs.IsClipDisabled() || !state.depth_stencil_attachment.has_depth || !db_desc.image_id) {
++        return false;
++    }
++    // Scene geometry depth-tests; fullscreen post passes (even stencil-masked ones) do not.
++    if (!regs.depth_control.depth_enable || !regs.depth_buffer.DepthValid()) {
++        return false;
++    }
++    const auto& depth_image = texture_cache.GetImage(db_desc.image_id);
++    const u32 width = depth_image.info.size.width;
++    const u32 height = depth_image.info.size.height;
++    if (!VideoCore::XfbMatchesAspect(width, height, xfb_output_extent)) {
++        return false;
++    }
++    // Excludes half and quarter size targets (reflections, bloom, depth of field).
++    if (u64(width) * height * 10 < u64(xfb_output_extent.width) * xfb_output_extent.height * 6) {
++        return false;
++    }
++    if (regs.depth_control.depth_write_enable) {
++        using AmdGpu::CompareFunc;
++        const auto func = regs.depth_control.depth_func;
++        if (func == CompareFunc::Greater || func == CompareFunc::GreaterEqual) {
++            ++depth_greater_draws;
++        } else if (func == CompareFunc::Less || func == CompareFunc::LessEqual) {
++            ++depth_less_draws;
++        }
++    }
++    return true;
++}
++
++void Rasterizer::EndXfbFrame(vk::Extent2D output_extent) {
++    if (!xfb_capture) {
++        return;
++    }
++    scheduler.EndRendering();
++    if (xfb_velocity) {
++        xfb_velocity->Render(*xfb_capture, output_extent);
++    }
++    xfb_capture->EndFrame(scheduler.CommandBuffer());
++    xfb_output_extent = output_extent;
++
++    // The frame just closed was drawn with the current jitter; the next one gets a new phase.
++    presented_jitter_x = jitter_x;
++    presented_jitter_y = jitter_y;
++    if (depth_greater_draws + depth_less_draws > 0) {
++        depth_inverted = depth_greater_draws > depth_less_draws;
++    }
++    depth_greater_draws = 0;
++    depth_less_draws = 0;
++    if (jitter_enabled) {
++        // Halton (2, 3), 16 phases, centred on the pixel.
++        jitter_index = (jitter_index + 1) % 16;
++        jitter_x = Halton(jitter_index + 1, 2) - 0.5f;
++        jitter_y = Halton(jitter_index + 1, 3) - 0.5f;
++    }
++}
++
++vk::ImageView Rasterizer::EvaluateDlss(VideoCore::Image& color, vk::Format view_format) {
++    if (!dlss || !xfb_velocity) {
++        return {};
++    }
++    const auto outputs = xfb_velocity->FrameOutputs();
++    if (!outputs) {
++        return {};
++    }
++    const bool srgb =
++        view_format == vk::Format::eB8G8R8A8Srgb || view_format == vk::Format::eR8G8B8A8Srgb;
++    const bool unorm8 =
++        view_format == vk::Format::eB8G8R8A8Unorm || view_format == vk::Format::eR8G8B8A8Unorm;
++    if (!srgb && !unorm8) {
++        // 10-bit and HDR frames are left alone.
++        return {};
++    }
++    const vk::Format sampled_format =
++        srgb ? vk::Format::eR8G8B8A8Srgb : vk::Format::eR8G8B8A8Unorm;
++    const vk::Extent2D size{color.info.size.width, color.info.size.height};
++
++    scheduler.EndRendering();
++    const auto cmdbuf = scheduler.CommandBuffer();
++    if (const u32 mode = EmulatorSettings.GetDlssDebugView(); mode != 0) {
++        if (outputs->size != size) {
++            return {};
++        }
++        return dlss->RenderDebug(cmdbuf, *outputs, mode, size, sampled_format);
++    }
++    if (!EmulatorSettings.IsDlssEnabled()) {
++        return {};
++    }
++
++    VideoCore::ImageViewInfo unorm_info{};
++    unorm_info.format = view_format == vk::Format::eB8G8R8A8Srgb   ? vk::Format::eB8G8R8A8Unorm
++                        : view_format == vk::Format::eR8G8B8A8Srgb ? vk::Format::eR8G8B8A8Unorm
++                                                                   : view_format;
++    const auto color_view = *color.FindView(unorm_info).image_view;
++
++    if (size != dlss_last_size) {
++        dlss_reset = true;
++        dlss_last_size = size;
++    }
++    const float sign = EmulatorSettings.IsDlssJitterFlip() ? -1.0f : 1.0f;
++    const HostPasses::DlssPass::Inputs inputs{
++        .color = color.GetImage(),
++        .color_view = color_view,
++        .color_format = unorm_info.format,
++        .size = size,
++        .velocity = *outputs,
++        .jitter_x = jitter_enabled ? sign * presented_jitter_x : 0.0f,
++        .jitter_y = jitter_enabled ? sign * presented_jitter_y : 0.0f,
++        .reset = dlss_reset,
++        .depth_inverted = depth_inverted,
++        .preset = EmulatorSettings.GetDlssPreset(),
++    };
++    const auto view = dlss->Render(cmdbuf, inputs, sampled_format);
++    if (view) {
++        dlss_reset = false;
++    }
++    return view;
++}
++
+ void Rasterizer::OnSubmit() {
+     buffer_cache.TickFrame();
+     texture_cache.ProcessDownloadImages();
+@@ -1428,6 +1721,10 @@ void Rasterizer::UpdateViewportScissorState() const {
+             viewport.y = yoffset - yscale;
+             viewport.width = xscale * 2.0f;
+             viewport.height = yscale * 2.0f;
++            if (jitter_this_draw) {
++                viewport.x += jitter_x;
++                viewport.y += jitter_y;
++            }
+         }
+ 
+         viewports.push_back(viewport);
+diff --git a/src/video_core/renderer_vulkan/vk_rasterizer.h b/src/video_core/renderer_vulkan/vk_rasterizer.h
+index 9e96198..a4bae09 100644
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.h
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.h
+@@ -3,13 +3,17 @@
+ 
+ #pragma once
+ 
++#include <optional>
+ #include "common/recursive_lock.h"
+ #include "common/shared_first_mutex.h"
+ #include "video_core/buffer_cache/buffer_cache.h"
+ #include "video_core/page_manager.h"
++#include "video_core/renderer_vulkan/host_passes/dlss_pass.h"
++#include "video_core/renderer_vulkan/host_passes/xfb_velocity_pass.h"
+ #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
+ #include "video_core/renderer_vulkan/vk_scheduler.h"
+ #include "video_core/texture_cache/texture_cache.h"
++#include "video_core/xfb_capture.h"
+ 
+ namespace AmdGpu {
+ struct Liverpool;
+@@ -85,6 +89,14 @@ public:
+     void OnFence();
+     void EnqueueEopFence(Common::UniqueFunction<void>&& signal);
+ 
++    /// Closes the transform feedback frame at a guest flip: renders motion vectors for the
++    /// draws captured since the previous flip and swaps the capture buffers.
++    void EndXfbFrame(vk::Extent2D output_extent);
++
++    /// Runs DLSS (or its debug view) on the presented frame. Returns the view to present in
++    /// place of the frame, or null to present the frame unchanged. `color` must be readable.
++    vk::ImageView EvaluateDlss(VideoCore::Image& color, vk::Format view_format);
++
+     PipelineCache& GetPipelineCache() {
+         return pipeline_cache;
+     }
+@@ -162,6 +174,26 @@ private:
+     std::array<ImageBinding, Shader::NUM_IMAGES> image_bindings;
+     std::array<ImageBinding, AmdGpu::NUM_COLOR_BUFFERS> cb_descs;
+     ImageBinding db_desc;
++    std::optional<VideoCore::XfbCapture> xfb_capture;
++    std::optional<HostPasses::XfbVelocityPass> xfb_velocity;
++    std::optional<HostPasses::DlssPass> dlss;
++    vk::Extent2D xfb_output_extent{};
++
++    // Sub-pixel jitter applied to scene draws (viewport offset, in render target pixels).
++    bool ShouldJitterDraw(const RenderState& state);
++    bool jitter_enabled{};
++    u32 jitter_index{};
++    float jitter_x{};
++    float jitter_y{};
++    // The jitter the frame being presented was drawn with.
++    float presented_jitter_x{};
++    float presented_jitter_y{};
++    mutable bool jitter_this_draw{};
++    u32 depth_greater_draws{};
++    u32 depth_less_draws{};
++    bool depth_inverted{};
++    bool dlss_reset{true};
++    vk::Extent2D dlss_last_size{};
+ 
+     boost::container::static_vector<vk::DescriptorImageInfo, Shader::NUM_IMAGES> image_infos;
+     boost::container::static_vector<vk::DescriptorBufferInfo, Shader::NUM_BUFFERS> buffer_infos;
+diff --git a/src/video_core/texture_cache/texture_cache.h b/src/video_core/texture_cache/texture_cache.h
+index 54253b4..2e2fdf2 100644
+--- a/src/video_core/texture_cache/texture_cache.h
++++ b/src/video_core/texture_cache/texture_cache.h
+@@ -179,6 +179,11 @@ public:
+                                          AmdGpu::BorderColorBuffer border_color_base,
+                                          bool is_depth);
+ 
++    /// Returns true when the id still refers to a live image.
++    [[nodiscard]] bool IsImageAllocated(ImageId id) const noexcept {
++        return slot_images.IsAllocated(id);
++    }
++
+     /// Retrieves the image with the specified id.
+     [[nodiscard]] Image& GetImage(ImageId id) {
+         auto& image = slot_images[id];
+diff --git a/src/video_core/xfb_capture.cpp b/src/video_core/xfb_capture.cpp
+new file mode 100644
+index 0000000..f493cbf
+--- /dev/null
++++ b/src/video_core/xfb_capture.cpp
+@@ -0,0 +1,130 @@
++// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#include <string_view>
++#include "common/logging/log.h"
++#include "shader_recompiler/xfb_layout.h"
++#include "video_core/renderer_vulkan/vk_instance.h"
++#include "video_core/renderer_vulkan/vk_platform.h"
++#include "video_core/xfb_capture.h"
++
++namespace VideoCore {
++
++// Frames between summary lines.
++constexpr u32 ReportInterval = 300;
++
++constexpr vk::BufferUsageFlags CaptureUsage = vk::BufferUsageFlagBits::eTransformFeedbackBufferEXT |
++                                              vk::BufferUsageFlagBits::eStorageBuffer |
++                                              vk::BufferUsageFlagBits::eTransferSrc;
++
++constexpr vk::BufferUsageFlags CounterUsage =
++    vk::BufferUsageFlagBits::eTransformFeedbackCounterBufferEXT |
++    vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eStorageBuffer |
++    vk::BufferUsageFlagBits::eTransferSrc;
++
++constexpr u64 CounterBufferSize = u64(XfbCapture::MaxRegions) * sizeof(u32);
++
++XfbCapture::XfbCapture(const Vulkan::Instance& instance)
++    : buffer_a{instance.GetDevice(), instance.GetAllocator()},
++      buffer_b{instance.GetDevice(), instance.GetAllocator()},
++      counters_a{instance.GetDevice(), instance.GetAllocator()},
++      counters_b{instance.GetDevice(), instance.GetAllocator()} {
++    const auto create = [&](UniqueBuffer& buffer, u64 size, vk::BufferUsageFlags usage,
++                            std::string_view name) {
++        vk::BufferCreateInfo buffer_ci{
++            .size = size,
++            .usage = usage,
++            .sharingMode = vk::SharingMode::eExclusive,
++        };
++        buffer.Create(buffer_ci, MemoryType::DeviceLocal, nullptr);
++        Vulkan::SetObjectName(instance.GetDevice(), buffer.buffer, name);
++    };
++    create(buffer_a, BufferSize, CaptureUsage, "XFB Capture A");
++    create(buffer_b, BufferSize, CaptureUsage, "XFB Capture B");
++    create(counters_a, CounterBufferSize, CounterUsage, "XFB Counters A");
++    create(counters_b, CounterBufferSize, CounterUsage, "XFB Counters B");
++}
++
++bool XfbCapture::Begin(vk::CommandBuffer cmdbuf, const XfbRegion& region) {
++    const u64 bytes = u64(region.max_vertices) * Shader::XfbVertexStride;
++    if (bytes == 0 || write_offset + bytes > BufferSize || regions.size() >= MaxRegions) {
++        ++overflow_draws;
++        return false;
++    }
++    const vk::Buffer handle = CurrentBuffer();
++    const vk::DeviceSize offset = write_offset;
++    const vk::DeviceSize size = bytes;
++    cmdbuf.bindTransformFeedbackBuffersEXT(0, 1, &handle, &offset, &size);
++    cmdbuf.beginTransformFeedbackEXT(0, vk::ArrayProxy<const vk::Buffer>{},
++                                     vk::ArrayProxy<const vk::DeviceSize>{});
++
++    XfbRegion stored = region;
++    stored.offset = static_cast<u32>(write_offset);
++    stored.counter_offset = static_cast<u32>(regions.size() * sizeof(u32));
++    regions.push_back(stored);
++
++    write_offset += bytes;
++    ++window_draws;
++    window_vertices += region.max_vertices;
++    return true;
++}
++
++void XfbCapture::End(vk::CommandBuffer cmdbuf) {
++    // Writes the byte offset where capture stopped; the velocity pass derives the vertex count
++    // from it with vkCmdDrawIndirectByteCountEXT.
++    const vk::Buffer counter = CurrentCounters();
++    const vk::DeviceSize counter_offset = regions.back().counter_offset;
++    cmdbuf.endTransformFeedbackEXT(0, 1, &counter, &counter_offset);
++}
++
++void XfbCapture::EndFrame(vk::CommandBuffer cmdbuf) {
++    // The buffers about to be reused were written two frames ago and read by the velocity pass
++    // last frame.
++    const std::array barriers = {
++        vk::BufferMemoryBarrier2{
++            .srcStageMask = vk::PipelineStageFlagBits2::eTransformFeedbackEXT |
++                            vk::PipelineStageFlagBits2::eVertexShader,
++            .srcAccessMask = vk::AccessFlagBits2::eTransformFeedbackWriteEXT |
++                             vk::AccessFlagBits2::eShaderStorageRead,
++            .dstStageMask = vk::PipelineStageFlagBits2::eTransformFeedbackEXT,
++            .dstAccessMask = vk::AccessFlagBits2::eTransformFeedbackWriteEXT,
++            .buffer = PreviousBuffer(),
++            .offset = 0,
++            .size = vk::WholeSize,
++        },
++        vk::BufferMemoryBarrier2{
++            .srcStageMask = vk::PipelineStageFlagBits2::eTransformFeedbackEXT |
++                            vk::PipelineStageFlagBits2::eDrawIndirect,
++            .srcAccessMask = vk::AccessFlagBits2::eTransformFeedbackCounterWriteEXT |
++                             vk::AccessFlagBits2::eTransformFeedbackCounterReadEXT,
++            .dstStageMask = vk::PipelineStageFlagBits2::eTransformFeedbackEXT,
++            .dstAccessMask = vk::AccessFlagBits2::eTransformFeedbackCounterWriteEXT,
++            .buffer = (parity == 0 ? counters_b : counters_a).buffer,
++            .offset = 0,
++            .size = vk::WholeSize,
++        },
++    };
++    cmdbuf.pipelineBarrier2(vk::DependencyInfo{
++        .bufferMemoryBarrierCount = static_cast<u32>(barriers.size()),
++        .pBufferMemoryBarriers = barriers.data(),
++    });
++
++    prev_regions.swap(regions);
++    regions.clear();
++    parity ^= 1;
++    write_offset = 0;
++
++    if (++frames >= ReportInterval) {
++        LOG_INFO(Render_Vulkan,
++                 "xfb capture: frames={} draws/frame={:.1f} vertices/frame={:.0f} "
++                 "overflow_draws={}",
++                 frames, double(window_draws) / double(frames),
++                 double(window_vertices) / double(frames), overflow_draws);
++        frames = 0;
++        window_draws = 0;
++        window_vertices = 0;
++        overflow_draws = 0;
++    }
++}
++
++} // namespace VideoCore
+diff --git a/src/video_core/xfb_capture.h b/src/video_core/xfb_capture.h
+new file mode 100644
+index 0000000..3ee844e
+--- /dev/null
++++ b/src/video_core/xfb_capture.h
+@@ -0,0 +1,120 @@
++// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#pragma once
++
++#include <algorithm>
++#include <span>
++#include <vector>
++#include "common/types.h"
++#include "video_core/buffer_cache/buffer.h"
++#include "video_core/texture_cache/types.h"
++#include "core/emulator_settings.h"
++
++namespace Vulkan {
++class Instance;
++} // namespace Vulkan
++
++namespace VideoCore {
++
++// Transform feedback capture (and the shader variants it needs) only runs when DLSS or its
++// debug view is switched on in the config.
++inline bool DlssInputsWanted() {
++    return EmulatorSettings.IsDlssEnabled() || EmulatorSettings.GetDlssDebugView() != 0;
++}
++
++// Within 1% to absorb rounding of odd internal resolutions.
++inline bool XfbMatchesAspect(u32 width, u32 height, vk::Extent2D output) {
++    if (output.width == 0 || output.height == 0) {
++        return false;
++    }
++    const u64 lhs = u64(width) * output.height;
++    const u64 rhs = u64(height) * output.width;
++    const u64 diff = lhs > rhs ? lhs - rhs : rhs - lhs;
++    return diff * 100 <= std::max(lhs, rhs);
++}
++
++// Rasterization state of a captured draw, replayed by the velocity pass so coverage matches.
++struct XfbDrawState {
++    vk::Viewport viewport;
++    vk::Rect2D scissor;
++    vk::CullModeFlags cull_mode;
++    vk::FrontFace front_face;
++    float depth_bias_constant;
++    float depth_bias_clamp;
++    float depth_bias_slope;
++    bool depth_bias_enabled;
++    bool depth_clamp;
++    bool depth_clip;
++    bool negative_one_to_one;
++};
++
++struct XfbRegion {
++    u64 key;
++    u32 offset;
++    u32 max_vertices;
++    u32 counter_offset;
++    ImageId depth_id;
++    vk::Image depth_image;
++    vk::ImageView depth_view;
++    vk::Format depth_format;
++    bool has_stencil;
++    vk::SampleCountFlagBits samples;
++    // Owns its pixels but its vectors are not trusted.
++    bool blended;
++    u32 width;
++    u32 height;
++    XfbDrawState state;
++};
++
++// Captures clip-space positions of scene draws through transform feedback. Two buffer sets
++// alternate per frame so the previous frame's capture stays readable while the current one is
++// written.
++class XfbCapture {
++public:
++    explicit XfbCapture(const Vulkan::Instance& instance);
++
++    bool Begin(vk::CommandBuffer cmdbuf, const XfbRegion& region);
++    void End(vk::CommandBuffer cmdbuf);
++    void EndFrame(vk::CommandBuffer cmdbuf);
++
++    [[nodiscard]] std::span<const XfbRegion> CurrentRegions() const noexcept {
++        return regions;
++    }
++
++    [[nodiscard]] std::span<const XfbRegion> PreviousRegions() const noexcept {
++        return prev_regions;
++    }
++
++    [[nodiscard]] vk::Buffer CurrentBuffer() const noexcept {
++        return (parity == 0 ? buffer_a : buffer_b).buffer;
++    }
++
++    [[nodiscard]] vk::Buffer PreviousBuffer() const noexcept {
++        return (parity == 0 ? buffer_b : buffer_a).buffer;
++    }
++
++    [[nodiscard]] vk::Buffer CurrentCounters() const noexcept {
++        return (parity == 0 ? counters_a : counters_b).buffer;
++    }
++
++    static constexpr u64 BufferSize = 512_MB;
++    static constexpr u32 MaxRegions = 65536;
++
++private:
++    // Transform feedback usage is outside VideoCore::Buffer's fixed usage flags.
++    UniqueBuffer buffer_a;
++    UniqueBuffer buffer_b;
++    UniqueBuffer counters_a;
++    UniqueBuffer counters_b;
++    u32 parity{};
++    u64 write_offset{};
++    std::vector<XfbRegion> regions;
++    std::vector<XfbRegion> prev_regions;
++    u32 frames{};
++    u32 overflow_draws{};
++    u64 window_draws{};
++    u64 window_vertices{};
++};
++
++} // namespace VideoCore
