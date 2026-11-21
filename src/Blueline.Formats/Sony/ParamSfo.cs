@@ -3,7 +3,7 @@ using System.Text;
 
 namespace Blueline.Formats.Sony;
 
-/// <summary>Reads `sce_sys/param.sfo`, the PS4 title metadata table. Read-only.</summary>
+/// <summary>Reads `sce_sys/param.sfo`, the PS4 title metadata table. Values can be changed in place within the room they have.</summary>
 public sealed class ParamSfo
 {
     private const int HeaderSize = 20;
@@ -54,6 +54,52 @@ public sealed class ParamSfo
                 result._values[key] = BinaryPrimitives.ReadUInt32LittleEndian(value).ToString();
         }
         return result;
+    }
+
+    /// <summary>Where a key's value sits: its offset, its used length and the room it has. Null when the key is missing.</summary>
+    public static (int Offset, int Length, int Room, int EntryAt)? Locate(ReadOnlySpan<byte> data, string key)
+    {
+        var keys = (int)BinaryPrimitives.ReadUInt32LittleEndian(data[8..]);
+        var values = (int)BinaryPrimitives.ReadUInt32LittleEndian(data[12..]);
+        var count = (int)BinaryPrimitives.ReadUInt32LittleEndian(data[16..]);
+        for (var i = 0; i < count; i++)
+        {
+            var at = HeaderSize + i * EntrySize;
+            var entry = data.Slice(at, EntrySize);
+            var rest = data[(keys + BinaryPrimitives.ReadUInt16LittleEndian(entry))..];
+            if (Encoding.ASCII.GetString(rest[..rest.IndexOf((byte)0)]) != key)
+                continue;
+            var offset = values + (int)BinaryPrimitives.ReadUInt32LittleEndian(entry[12..]);
+            var length = (int)BinaryPrimitives.ReadUInt32LittleEndian(entry[4..]);
+            var room = (int)BinaryPrimitives.ReadUInt32LittleEndian(entry[8..]);
+            if (offset + room > data.Length)
+                throw new InvalidDataException("This param.sfo is damaged: an entry points outside the file.");
+            return (offset, length, room, at);
+        }
+        return null;
+    }
+
+    /// <summary>Sets a text value in place, within the room the file already gives it. Returns false when the key is missing.</summary>
+    public static bool SetText(byte[] data, string key, string value)
+    {
+        if (Locate(data, key) is not { } slot)
+            return false;
+        var bytes = Encoding.UTF8.GetBytes(value);
+        if (bytes.Length + 1 > slot.Room)
+            throw new ArgumentException($"{value} does not fit in {key} ({slot.Room - 1} bytes).");
+        data.AsSpan(slot.Offset, slot.Room).Clear();
+        bytes.CopyTo(data, slot.Offset);
+        BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(slot.EntryAt + 4), (uint)bytes.Length + 1);
+        return true;
+    }
+
+    /// <summary>Zeroes a value in place, such as ACCOUNT_ID. Returns false when the key is missing.</summary>
+    public static bool Clear(byte[] data, string key)
+    {
+        if (Locate(data, key) is not { } slot)
+            return false;
+        data.AsSpan(slot.Offset, slot.Length).Clear();
+        return true;
     }
 
     /// <summary>The format says UTF-8, but NHL 19's title holds a bare Latin-1 ®, so fall back when UTF-8 fails.</summary>

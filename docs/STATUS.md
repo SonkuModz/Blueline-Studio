@@ -28,6 +28,7 @@ screen French. That archive was a probe made before this tool's builder existed,
 | Video | All 394 videos, `.mkv` and `.vp6`: play with sound, seek, view the matte, export the original or an MP4. Replace `.mkv` from any video, encoded to match. Replace `.vp6` from an AVI you encode as VP60, keeping its sound and matte. Needs FFmpeg, which you install | Tested on real files. Playback, matte and `.mkv` replace run in the UI tour. `.vp6` repack rebuilds real files byte for byte from their own frames. No replacement has been seen in game |
 | Overlays | All 94 on-screen graphics, joined from definition to textures. Preview draws them with the game's textures, fonts, tints, blend modes and clipping on a 1920 by 1080 screen, with sample teams and scores. Movies play frame by frame. Edit widgets by dragging or by property, add, copy and delete them. Replace textures, edit settings, edit layouts, navigation and Lua as text, replace movies | Tested on real files and in the UI tour, and edits build and read back. The score clock looks right against its art, intros less so because their animation is not played. No edit has been seen in game, and files from `boot.big` and `overlays_2x` may not load (RESEARCH 6.9) |
 | Build | Change list, per-file revert, build with read-back verification, install, uninstall. Add another mod (a Blueline project, a `.big`, or a folder of them): compares every file, shows conflicts and warnings, takes what you tick as one undo step | Tested on real files, and in a sandbox install. Loaded in game. A combined mod has not been tried in game |
+| Mods | Mod packs (`.blpack`, docs/MOD_PACKS.md): export from Build with art and an optional roster save; open or drop a pack, check game version and stock files, conflicts and load order (top wins, each file in one archive), install as `patch_*_99_pk-*`, roster into a free custom slot (never RosterCustom0) with backup, enable, disable, uninstall back to stock. CLI `pack-*` | Tested on a fake game and in a sandbox round trip; booted to the home menu with a pack installed. Not yet seen in game |
 | Play | Game art and details from `sce_sys`, installed mods, keyboard controls, launch and stop, live log, and shadPS4 settings with save, discard and restore, in either settings format | Launch and stop run through the real button. See below |
 
 **Play tab settings.** The tab checks the chosen `shadPS4.exe` to see which file it reads (RESEARCH section 4.3).
@@ -71,7 +72,9 @@ The `blueline` command line (`src/Blueline.Cli`) covers audit, find, extract, pr
 text edits, folder texture import, build, install and uninstall. All have been run against the real game; `set` is
 the exception, covered only by the same `ModProject.Set` call that the other commands use. `texture-png`, `db-tables`,
 `db-show`, `team-list` and `team-assets` read the game and were used for the team survey. `team-logos` was run once
-against a throwaway project.
+against a throwaway project. `franchise-info`, `franchise-repack`, `franchise-sync` and `franchise-immersion` read and
+write Franchise (BeAGM) saves and add real-world Franchise data to a project; see FRANCHISE.md section 7. A repacked
+Franchise save has not been loaded in game.
 
 ## Tests
 

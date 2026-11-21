@@ -11,11 +11,13 @@ public sealed record ShadOption(string Value, string Label)
 
 /// <summary>
 /// One setting the Play tab offers. For a resolution, <see cref="Key"/> is width and <see cref="HeightKey"/> height.
-/// <see cref="GameOverride"/> is false when the emulator ignores this key in a per-game file.
+/// <see cref="GameOverride"/> is false when the emulator ignores this key in a per-game file. <see cref="Default"/> is
+/// the emulator's own value for a key it has not written yet, so the form can still offer it.
 /// </summary>
 public sealed record ShadSetting(
     string Group, string Section, string Key, string Label, string Hint, ShadSettingKind Kind,
-    IReadOnlyList<ShadOption>? Options = null, int Min = 0, int Max = 0, string? HeightKey = null, bool GameOverride = true)
+    IReadOnlyList<ShadOption>? Options = null, int Min = 0, int Max = 0, string? HeightKey = null, bool GameOverride = true,
+    string? Default = null)
 {
     public string Id => $"{Section}.{Key}";
 }
@@ -118,12 +120,23 @@ public static class ShadSettings
         new(System, "Input", "background_controller_input", "Controller works when unfocused", "Off means the window must be in front to take controller input.", ShadSettingKind.Toggle),
     ];
 
+    /// <summary>
+    /// DLSS from the DLSS build of the emulator (see docs/UPSCALING.md). At 1080p in and out it runs as DLAA, NVIDIA's
+    /// anti-aliasing. Off is the emulator's default, and older builds never write the key.
+    /// </summary>
+    public static ShadSetting Dlss { get; } =
+        new(Display, "GPU", "dlss_enabled", "DLSS (DLAA)", "NVIDIA RTX only. Smoother edges at the same resolution, for about 1.5 ms a frame. Takes effect on the next launch.",
+            ShadSettingKind.Toggle, Default: "false");
+
+    /// <summary>The JSON list plus <see cref="Dlss"/>, for builds that have it. One list, so the Play tab keeps its form.</summary>
+    public static IReadOnlyList<ShadSetting> JsonWithDlss { get; } = [.. Json, Dlss];
+
     /// <summary>Reads a setting as the form shows it: `true`, `Mailbox`, `720`, or `1280x720`. Null when missing.</summary>
     public static string? Read(IConfigEditor config, ShadSetting setting)
     {
         var raw = config.GetRaw(setting.Section, setting.Key);
         if (raw == null)
-            return null;
+            return setting.Default;
         if (setting.Kind != ShadSettingKind.Resolution)
             return raw.Trim('"');
         return config.GetRaw(setting.Section, setting.HeightKey!) is { } height ? $"{raw}x{height}" : null;

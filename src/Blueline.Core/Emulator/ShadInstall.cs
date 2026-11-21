@@ -26,7 +26,11 @@ public sealed class ShadInstall
     public string Folder { get; }
     public string UserFolder { get; }
     public ShadConfigFormat Format => DetectFormat(Executable);
-    public IReadOnlyList<ShadSetting> Settings => Format == ShadConfigFormat.Json ? ShadSettings.Json : ShadSettings.All;
+    public IReadOnlyList<ShadSetting> Settings => Format != ShadConfigFormat.Json ? ShadSettings.All
+        : HasDlss ? ShadSettings.JsonWithDlss : ShadSettings.Json;
+
+    /// <summary>Whether this is the DLSS build: it knows the setting and has NVIDIA's DLSS library beside it.</summary>
+    public bool HasDlss => File.Exists(Path.Combine(Folder, "nvngx_dlss.dll")) && Scan(Executable).Dlss;
     public string ConfigPath => Path.Combine(UserFolder, Format == ShadConfigFormat.Json ? "config.json" : "config.toml");
     public string BackupPath => ConfigPath + BackupSuffix;
     public bool HasConfig => File.Exists(ConfigPath);
@@ -130,14 +134,24 @@ public sealed class ShadInstall
     /// </summary>
     private static ShadConfigFormat DetectFormat(string executable)
     {
-        var file = new FileInfo(executable);
-        if (!file.Exists)
-            return ShadConfigFormat.Toml;
-        return Formats.GetOrAdd((file.FullName, file.Length, file.LastWriteTimeUtc), _ =>
-            File.ReadAllBytes(file.FullName).AsSpan().IndexOf("readbacks_mode"u8) >= 0 ? ShadConfigFormat.Json : ShadConfigFormat.Toml);
+        return Scan(executable).Format;
     }
 
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, long, DateTime), ShadConfigFormat> Formats = new();
+    /// <summary>Reads the program once per version of the file and notes which settings keys it holds.</summary>
+    private static (ShadConfigFormat Format, bool Dlss) Scan(string executable)
+    {
+        var file = new FileInfo(executable);
+        if (!file.Exists)
+            return (ShadConfigFormat.Toml, false);
+        return Scans.GetOrAdd((file.FullName, file.Length, file.LastWriteTimeUtc), _ =>
+        {
+            var bytes = File.ReadAllBytes(file.FullName).AsSpan();
+            var json = bytes.IndexOf("readbacks_mode"u8) >= 0;
+            return (json ? ShadConfigFormat.Json : ShadConfigFormat.Toml, json && bytes.IndexOf("dlss_enabled"u8) >= 0);
+        });
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, long, DateTime), (ShadConfigFormat, bool)> Scans = new();
 
     /// <summary>Play time the emulator has recorded for a title, or null if it has none.</summary>
     public string? PlayTime(string titleId)

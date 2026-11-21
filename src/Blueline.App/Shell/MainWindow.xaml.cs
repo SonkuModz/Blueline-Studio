@@ -29,6 +29,7 @@ public partial class MainWindow : Window
             new AssetsModule(services),
             new TexturesModule(services),
             new TeamsModule(services),
+            new RosterModule(services),
             new JerseyMapsModule(services),
             new FontMapsModule(services),
             new ModelsModule(services),
@@ -38,6 +39,7 @@ public partial class MainWindow : Window
             new VideoModule(services),
             new OverlaysModule(services),
             new BuildModule(services),
+            new ModsModule(services),
             new PlayModule(services),
         ];
 
@@ -47,7 +49,8 @@ public partial class MainWindow : Window
         BuildShortcuts();
         Palette.Source = PaletteItems;
         Tabs.SizeChanged += (_, _) => RefreshIndicator();
-        SizeChanged += (_, _) => ShowGroupLabels();
+        TabArea.SizeChanged += (_, _) => RefreshIndicator();
+        RailScroll.ScrollChanged += (_, _) => RefreshIndicator();
 
         services.Workspace.Changed += () => Dispatcher.BeginInvoke(RefreshProjectState);
         services.Jobs.Updated += OnJobUpdated;
@@ -89,8 +92,8 @@ public partial class MainWindow : Window
     private static readonly (string? Label, string[] Titles)[] TabGroups =
     [
         ("LIBRARY", ["Assets", "Textures", "Text", "Database", "Audio", "Video"]),
-        ("CREATE", ["Teams", "Jersey Maps", "Font Maps", "Models", "Overlays"]),
-        ("SHIP", ["Build", "Play"]),
+        ("CREATE", ["Teams", "Roster", "Jersey Maps", "Font Maps", "Models", "Overlays"]),
+        ("SHIP", ["Build", "Mods", "Play"]),
         (null, ["Settings"]),
     ];
 
@@ -104,39 +107,42 @@ public partial class MainWindow : Window
         ["Audio"] = "",
         ["Video"] = "",
         ["Teams"] = "",
+        ["Roster"] = "",
         ["Jersey Maps"] = "",
         ["Font Maps"] = "",
         ["Models"] = "",
         ["Overlays"] = "",
         ["Build"] = "",
+        ["Mods"] = "",
         ["Play"] = "",
         ["Settings"] = "",
     };
 
-    private readonly List<TextBlock> _groupLabels = [];
     private readonly List<System.Windows.Media.Animation.AnimationClock> _indicatorClocks = [];
     private RadioButton? _activeTab;
 
+    /// <summary>Short rail captions for the names that would not fit under an icon.</summary>
+    private static readonly Dictionary<string, string> RailCaptions = new()
+    {
+        ["Jersey Maps"] = "Jerseys",
+        ["Font Maps"] = "Fonts",
+        ["Database"] = "Data",
+    };
+
+    /// <summary>Fills the left rail: one icon over a caption per tab, a thin line between groups, and Settings at the foot.</summary>
     private void BuildTabs()
     {
         var first = true;
         foreach (var (label, titles) in TabGroups)
         {
-            if (!first)
+            var panel = label == null ? RailFoot : Tabs;
+            if (!first && label != null)
             {
-                var divider = new System.Windows.Shapes.Rectangle { Width = 1, Height = 16, Margin = new Thickness(6, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center };
+                var divider = new System.Windows.Shapes.Rectangle { Height = 1, Margin = new Thickness(12, 6, 12, 6) };
                 divider.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "LineBrush");
-                Tabs.Children.Add(divider);
+                panel.Children.Add(divider);
             }
             first = false;
-
-            if (label != null)
-            {
-                var text = new TextBlock { Text = label, FontSize = 10, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0), Visibility = Visibility.Collapsed };
-                text.SetResourceReference(TextBlock.ForegroundProperty, "DimBrush");
-                _groupLabels.Add(text);
-                Tabs.Children.Add(text);
-            }
 
             foreach (var title in titles)
             {
@@ -144,30 +150,41 @@ public partial class MainWindow : Window
                 var number = _modules.IndexOf(module) + 1;
                 var icon = new TextBlock
                 {
-                    Text = TabIcons.GetValueOrDefault(title, ""),
+                    Text = TabIcons.GetValueOrDefault(title, ""),
                     FontFamily = new System.Windows.Media.FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"),
-                    FontSize = 14,
-                    Margin = new Thickness(0, 1, 7, 0),
-                    VerticalAlignment = VerticalAlignment.Center,
+                    FontSize = 18,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Margin = new Thickness(0, 0, 0, 4),
                 };
-                var caption = new TextBlock { Text = title, VerticalAlignment = VerticalAlignment.Center };
+                var caption = new TextBlock
+                {
+                    Text = RailCaptions.GetValueOrDefault(title, title),
+                    FontSize = 11,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                };
+                // Both follow the tab's own colour, so hover and the chosen tab light up icon and caption together.
+                icon.SetBinding(TextBlock.ForegroundProperty, new System.Windows.Data.Binding("Foreground") { RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.FindAncestor, typeof(RadioButton), 1) });
+                caption.SetBinding(TextBlock.ForegroundProperty, new System.Windows.Data.Binding("Foreground") { RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.FindAncestor, typeof(RadioButton), 1) });
+                var group = label == null ? null : char.ToUpperInvariant(label[0]) + label[1..].ToLowerInvariant();
                 var tab = new RadioButton
                 {
-                    Content = new StackPanel { Orientation = Orientation.Horizontal, Children = { icon, caption } },
+                    Content = new StackPanel { Children = { icon, caption } },
                     Style = (Style)FindResource("NavTab"),
                     Tag = module,
-                    ToolTip = number <= 9 ? $"{title}  (Ctrl+{number})" : title,
+                    ToolTip = number <= 9 ? $"{title}  (Ctrl+{number})" : title == "Settings" ? "Settings  (Ctrl+,)" : title,
                 };
                 tab.Checked += (_, _) =>
                 {
                     _activeTab = tab;
-                    UpdateTabWords();
-                    Tabs.UpdateLayout(); // the line must measure the tab at its new width
+                    PageGroup.Text = group ?? "";
+                    PageGroup.Visibility = PageSlash.Visibility = group == null ? Visibility.Collapsed : Visibility.Visible;
+                    PageTitle.Text = title;
                     Show(module);
                     MoveIndicator(tab, animate: true);
                 };
                 _tabs[title] = tab;
-                Tabs.Children.Add(tab);
+                panel.Children.Add(tab);
             }
         }
     }
@@ -202,32 +219,6 @@ public partial class MainWindow : Window
         InputBindings.Add(new KeyBinding(settings, Key.OemComma, ModifierKeys.Control));
     }
 
-    /// <summary>The group names only show when the window is wide enough for them not to crowd the tabs.</summary>
-    private void ShowGroupLabels()
-    {
-        var show = ActualWidth >= 2050;
-        foreach (var label in _groupLabels)
-            label.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-        UpdateTabWords();
-    }
-
-    /// <summary>
-    /// Wide windows name every tab. Narrower ones name only the tab you are on, so all thirteen icons still fit;
-    /// tooltips carry the rest of the names.
-    /// </summary>
-    private void UpdateTabWords()
-    {
-        var all = ActualWidth >= 1900;
-        foreach (var tab in _tabs.Values)
-        {
-            if (tab.Content is not StackPanel { Children: [TextBlock glyph, TextBlock caption] })
-                continue;
-            var named = all || tab == _activeTab;
-            caption.Visibility = named ? Visibility.Visible : Visibility.Collapsed;
-            glyph.Margin = new Thickness(0, 1, named ? 7 : 0, 0);
-        }
-    }
-
     private void RefreshIndicator()
     {
         if (_activeTab != null)
@@ -248,19 +239,20 @@ public partial class MainWindow : Window
             return;
         }
 
-        var x = tab.TranslatePoint(new Point(0, 0), TabArea).X;
-        var width = tab.ActualWidth;
+        // The bar sits a little inside the tab, so it reads as part of it.
+        var x = tab.TranslatePoint(new Point(0, 0), TabArea).Y + 10;
+        var width = Math.Max(0, tab.ActualHeight - 20);
         var slide = (System.Windows.Media.TranslateTransform)Indicator.RenderTransform;
-        var fromX = slide.X;
-        var fromWidth = Indicator.Width;
+        var fromX = slide.Y;
+        var fromWidth = Indicator.Height;
         _indicatorClocks.Clear();
-        slide.ApplyAnimationClock(System.Windows.Media.TranslateTransform.XProperty, null);
-        Indicator.ApplyAnimationClock(WidthProperty, null);
+        slide.ApplyAnimationClock(System.Windows.Media.TranslateTransform.YProperty, null);
+        Indicator.ApplyAnimationClock(HeightProperty, null);
 
         if (!animate || !Motion.Enabled || fromWidth <= 0)
         {
-            slide.X = x;
-            Indicator.Width = width;
+            slide.Y = x;
+            Indicator.Height = width;
             return;
         }
 
@@ -272,18 +264,18 @@ public partial class MainWindow : Window
         {
             if (!_indicatorClocks.Contains(move))
                 return;
-            slide.ApplyAnimationClock(System.Windows.Media.TranslateTransform.XProperty, null);
-            slide.X = x;
+            slide.ApplyAnimationClock(System.Windows.Media.TranslateTransform.YProperty, null);
+            slide.Y = x;
         };
         grow.Completed += (_, _) =>
         {
             if (!_indicatorClocks.Contains(grow))
                 return;
-            Indicator.ApplyAnimationClock(WidthProperty, null);
-            Indicator.Width = width;
+            Indicator.ApplyAnimationClock(HeightProperty, null);
+            Indicator.Height = width;
         };
-        slide.ApplyAnimationClock(System.Windows.Media.TranslateTransform.XProperty, move);
-        Indicator.ApplyAnimationClock(WidthProperty, grow);
+        slide.ApplyAnimationClock(System.Windows.Media.TranslateTransform.YProperty, move);
+        Indicator.ApplyAnimationClock(HeightProperty, grow);
     }
 
     private void WireStartScreen()
@@ -346,6 +338,7 @@ public partial class MainWindow : Window
             bitmap.Render(Root);
             snapshot = new Image { Source = bitmap, IsHitTestVisible = false, Stretch = System.Windows.Media.Stretch.Fill };
             Grid.SetRowSpan(snapshot, 5);
+            Grid.SetColumnSpan(snapshot, 2);
             Root.Children.Add(snapshot);
         }
 
@@ -614,7 +607,8 @@ public partial class MainWindow : Window
         MenuStats.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
 
         var visible = has ? Visibility.Visible : Visibility.Collapsed;
-        MenuRule1.Visibility = MenuRule2.Visibility = MenuUndo.Visibility = MenuRedo.Visibility = MenuMerge.Visibility = MenuFolder.Visibility = MenuClose.Visibility = visible;
+        MenuRule1.Visibility = MenuRule2.Visibility = MenuUndo.Visibility = MenuRedo.Visibility = MenuMerge.Visibility = MenuFolder.Visibility = MenuPin.Visibility = MenuClose.Visibility = visible;
+        MenuPin.Content = project != null && _services.Settings.IsPinned(project.Folder) ? "Unpin from the start screen" : "Pin to the start screen";
         MenuUndo.Content = project?.UndoLabel is { } undo ? $"Undo: {undo}" : "Undo";
         MenuUndo.IsEnabled = project?.CanUndo == true;
         MenuRedo.Content = project?.RedoLabel is { } redo ? $"Redo: {redo}" : "Redo";
@@ -696,6 +690,17 @@ public partial class MainWindow : Window
         var build = _modules.OfType<BuildModule>().First();
         Navigate(build.Title, null);
         _ = build.CompareMod(folder);
+    }
+
+    private void OnMenuPin(object sender, RoutedEventArgs e)
+    {
+        ProjectMenu.IsOpen = false;
+        if (_services.Workspace.Project is not { } project)
+            return;
+        var pinned = _services.Settings.TogglePin(project.Folder);
+        _services.Settings.Save();
+        Start.RefreshRecent();
+        _services.Notify(pinned ? $"{project.Name} is pinned to the start screen" : $"{project.Name} is no longer pinned");
     }
 
     private void OnMenuFolder(object sender, RoutedEventArgs e)

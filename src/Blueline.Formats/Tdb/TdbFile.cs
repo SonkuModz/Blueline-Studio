@@ -95,6 +95,21 @@ public sealed class TdbTable
         return row;
     }
 
+    /// <summary>
+    /// Removes a row: the rows after it move up one and the freed record at the end is zeroed. Only the header's row count
+    /// changes. Not for tables whose rows hold string-pool pointers that others share. The caller must call
+    /// <see cref="TdbFile.RepairCrcs"/> before saving.
+    /// </summary>
+    public void RemoveRow(int row)
+    {
+        Record(row);
+        var data = _file.Data.AsSpan(RecordsAt, Count * Stride);
+        data[((row + 1) * Stride)..].CopyTo(data[(row * Stride)..]);
+        data[((Count - 1) * Stride)..].Clear();
+        Count--;
+        BinaryPrimitives.WriteUInt16LittleEndian(_file.Data.AsSpan(Slot + 4 + 0x12), (ushort)Count);
+    }
+
     public object Read(int row, TdbField field)
     {
         var record = Record(row);

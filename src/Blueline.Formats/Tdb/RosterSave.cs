@@ -144,7 +144,7 @@ public sealed partial class RosterSave
 
     // ---- LZ4 frame: independent 64 KB blocks, content checksum, no content size, as the game writes it
 
-    private static byte[] Unpack(ReadOnlySpan<byte> frame)
+    internal static byte[] Unpack(ReadOnlySpan<byte> frame)
     {
         var output = new MemoryStream();
         var block = new byte[BlockSize];
@@ -176,7 +176,7 @@ public sealed partial class RosterSave
         return content;
     }
 
-    private static byte[] Pack(byte[] content)
+    internal static byte[] Pack(byte[] content)
     {
         var output = new MemoryStream();
         output.Write(FrameHeader);

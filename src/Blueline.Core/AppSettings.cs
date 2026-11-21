@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 
 namespace Blueline.Core;
 
@@ -14,6 +14,9 @@ public sealed class AppSettings
     /// <summary>The user's ffmpeg.exe, when it is not on the PATH. Used for video.</summary>
     public string? FfmpegPath { get; set; }
     public List<string> RecentProjects { get; set; } = [];
+
+    /// <summary>Projects the user pinned. They stay at the top of the start screen, in the order they were pinned, however long ago they were opened.</summary>
+    public List<string> PinnedProjects { get; set; } = [];
 
     /// <summary>"dark" or "light". Dark is the default.</summary>
     public string Theme { get; set; } = UiPalette.DarkName;
@@ -55,6 +58,20 @@ public sealed class AppSettings
         Directory.CreateDirectory(Path.GetDirectoryName(File_)!);
         File.WriteAllText(File_, JsonSerializer.Serialize(this, Json));
     }
+
+    public bool IsPinned(string folder) => PinnedProjects.Any(p => p.Equals(folder, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Pins a project, or unpins it if it was pinned. Returns whether it is pinned now. Does not save.</summary>
+    public bool TogglePin(string folder)
+    {
+        if (PinnedProjects.RemoveAll(p => p.Equals(folder, StringComparison.OrdinalIgnoreCase)) > 0)
+            return false;
+        PinnedProjects.Add(folder);
+        return true;
+    }
+
+    /// <summary>Recent projects that are not pinned, newest first, so a pinned project is never listed twice.</summary>
+    public IEnumerable<string> UnpinnedRecent => RecentProjects.Where(p => !IsPinned(p));
 
     public void NoteRecentProject(string folder)
     {

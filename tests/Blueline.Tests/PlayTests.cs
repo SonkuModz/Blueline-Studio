@@ -285,7 +285,11 @@ public class PlayTests
 
         var boost = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "OvertimeRoster", "boost", "shadPS4.exe");
         if (File.Exists(boost))
-            Assert.AreEqual(ShadConfigFormat.Json, new ShadInstall(boost).Format);
+        {
+            var install = new ShadInstall(boost);
+            Assert.AreEqual(ShadConfigFormat.Json, install.Format);
+            Assert.AreEqual(File.Exists(Path.Combine(install.Folder, "nvngx_dlss.dll")), install.HasDlss);
+        }
     }
 
     [TestMethod]
@@ -303,6 +307,45 @@ public class PlayTests
             Assert.AreEqual(ShadConfigFormat.Toml, toml.Format);
             Assert.AreEqual("config.toml", Path.GetFileName(toml.ConfigPath));
             Assert.IsFalse(toml.EditsGameConfig);
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+        }
+    }
+
+    [TestMethod]
+    public void Install_OffersDlssOnlyOnTheDlssBuild()
+    {
+        var folder = TempFolder();
+        try
+        {
+            var plain = new ShadInstall(FakeExe(Path.Combine(folder, "plain"), "readbacks_mode"), Path.Combine(folder, "data"));
+            File.WriteAllText(Path.Combine(plain.Folder, "nvngx_dlss.dll"), "");
+            Assert.IsFalse(plain.HasDlss);
+            Assert.AreSame(ShadSettings.Json, plain.Settings);
+
+            var noLibrary = new ShadInstall(FakeExe(Path.Combine(folder, "nolib"), "readbacks_mode dlss_enabled"), Path.Combine(folder, "data"));
+            Assert.IsFalse(noLibrary.HasDlss);
+
+            var dlss = new ShadInstall(FakeExe(Path.Combine(folder, "dlss"), "readbacks_mode dlss_enabled"), Path.Combine(folder, "data"));
+            File.WriteAllText(Path.Combine(dlss.Folder, "nvngx_dlss.dll"), "");
+            Assert.IsTrue(dlss.HasDlss);
+            Assert.AreSame(ShadSettings.JsonWithDlss, dlss.Settings);
+
+            // Neither file has the key yet, so the form shows the emulator's default and saving adds it to the game file.
+            Directory.CreateDirectory(dlss.UserFolder);
+            File.WriteAllText(dlss.ConfigPath, JsonSample);
+            var game = dlss.GameConfigFile("CUSA11126");
+            Directory.CreateDirectory(Path.GetDirectoryName(game)!);
+            File.WriteAllText(game, "{\r\n  \"GPU\": {\r\n    \"vblank_frequency\": 90\r\n  }\r\n}");
+            Assert.AreEqual("false", ShadSettings.Read(dlss.ReadSettings(game), ShadSettings.Dlss));
+
+            dlss.SaveSettings(new Dictionary<ShadSetting, string> { [ShadSettings.Dlss] = "true" }, game);
+            Assert.AreEqual("true", JsonConfigEditor.Load(game).GetRaw("GPU", "dlss_enabled"));
+            Assert.AreEqual(JsonSample, File.ReadAllText(dlss.ConfigPath));
+            dlss.SaveSettings(new Dictionary<ShadSetting, string> { [ShadSettings.Dlss] = "false" }, game);
+            Assert.AreEqual("false", JsonConfigEditor.Load(game).GetRaw("GPU", "dlss_enabled"));
         }
         finally
         {

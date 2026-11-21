@@ -128,44 +128,73 @@ public partial class StartScreen : UserControl
     public void RefreshRecent()
     {
         RecentList.Children.Clear();
+        PinnedList.Children.Clear();
         _continueFolder = null;
         if (_services == null)
             return;
 
-        var shown = 0;
-        foreach (var folder in _services.Settings.RecentProjects.ToList())
-        {
-            if (shown >= MaxRecent || !Directory.Exists(folder))
-                continue;
-            ModProject project;
-            try
-            {
-                project = ModProject.Open(folder);
-            }
-            catch (Exception e) when (e is IOException or InvalidDataException or System.Text.Json.JsonException or UnauthorizedAccessException)
-            {
-                continue;
-            }
-
-            var installed = IsInstalled(project);
-            if (_continueFolder == null)
+        // Continue picks up the project opened last, pinned or not.
+        foreach (var folder in _services.Settings.RecentProjects)
+            if (TryOpen(folder) is { } last)
             {
                 _continueFolder = folder;
-                ContinueName.Text = project.Name;
-                ContinueDetail.Text = Describe(project, installed);
+                ContinueName.Text = last.Name;
+                ContinueDetail.Text = Describe(last, IsInstalled(last));
+                break;
             }
-            RecentList.Children.Add(Row(folder, project, installed));
+
+        var pinned = 0;
+        foreach (var folder in _services.Settings.PinnedProjects.ToList())
+            if (TryOpen(folder) is { } project)
+            {
+                PinnedList.Children.Add(Row(folder, project, IsInstalled(project), isPinned: true));
+                pinned++;
+            }
+
+        var shown = 0;
+        foreach (var folder in _services.Settings.UnpinnedRecent.ToList())
+        {
+            if (shown >= Math.Max(2, MaxRecent - pinned))
+                break;
+            if (TryOpen(folder) is not { } project)
+                continue;
+            RecentList.Children.Add(Row(folder, project, IsInstalled(project), isPinned: false));
             shown++;
         }
 
+        PinnedHost.Visibility = pinned > 0 ? Visibility.Visible : Visibility.Collapsed;
+        RecentLabel.Visibility = shown > 0 || pinned == 0 ? Visibility.Visible : Visibility.Collapsed;
         ContinueHost.Visibility = _continueFolder != null ? Visibility.Visible : Visibility.Collapsed;
-        NoRecent.Visibility = shown == 0 ? Visibility.Visible : Visibility.Collapsed;
+        NoRecent.Visibility = shown == 0 && pinned == 0 ? Visibility.Visible : Visibility.Collapsed;
 
         // With nothing to continue, opening a project is the main action.
         if (_continueFolder != null)
             OpenButton.ClearValue(StyleProperty);
         else
             OpenButton.SetResourceReference(StyleProperty, "Primary");
+    }
+
+    private static ModProject? TryOpen(string folder)
+    {
+        if (!Directory.Exists(folder))
+            return null;
+        try
+        {
+            return ModProject.Open(folder);
+        }
+        catch (Exception e) when (e is IOException or InvalidDataException or System.Text.Json.JsonException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    private void TogglePin(string folder)
+    {
+        if (_services == null)
+            return;
+        _services.Settings.TogglePin(folder);
+        _services.Settings.Save();
+        RefreshRecent();
     }
 
     private bool IsInstalled(ModProject project)
@@ -177,7 +206,7 @@ public partial class StartScreen : UserControl
     private static string Describe(ModProject project, bool installed) =>
         $"{project.ChangeCount} changed file{(project.ChangeCount == 1 ? "" : "s")}" + (installed ? "  ·  installed in the game" : "");
 
-    private FrameworkElement Row(string folder, ModProject project, bool installed)
+    private FrameworkElement Row(string folder, ModProject project, bool installed, bool isPinned)
     {
         var name = new TextBlock { Text = project.Name, FontSize = 13, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis };
         var detail = new TextBlock { Text = Describe(project, false), TextTrimming = TextTrimming.CharacterEllipsis };
@@ -194,13 +223,28 @@ public partial class StartScreen : UserControl
         }
         dock.Children.Add(text);
 
-        var card = new Border { CornerRadius = new CornerRadius(9), Padding = new Thickness(12, 9, 12, 9), Child = dock, BorderThickness = new Thickness(1) };
+        var card = new Border { CornerRadius = new CornerRadius(9), Padding = new Thickness(12, 9, 44, 9), Child = dock, BorderThickness = new Thickness(1) };
         card.SetResourceReference(Border.BackgroundProperty, "PanelBrush");
         card.SetResourceReference(Border.BorderBrushProperty, "LineBrush");
         var button = new Button { Content = card, Tag = folder, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, Padding = new Thickness(0), Margin = new Thickness(0, 0, 0, 6), ToolTip = folder };
         button.SetResourceReference(StyleProperty, "CardButton");
         button.Click += (_, _) => ProjectChosen?.Invoke(folder);
-        return button;
+
+        // The pin sits over the card's right edge rather than inside it, so pressing it never opens the project.
+        var glyph = new TextBlock { Text = isPinned ? "" : "", FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"), FontSize = 13 };
+        glyph.SetResourceReference(TextBlock.ForegroundProperty, isPinned ? "AccentTextBrush" : "DimBrush");
+        var pin = new Button
+        {
+            Content = glyph,
+            Padding = new Thickness(8, 6, 8, 6),
+            Margin = new Thickness(0, 0, 8, 6),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
+            ToolTip = isPinned ? $"Unpin {project.Name}" : $"Pin {project.Name} to the top",
+        };
+        pin.SetResourceReference(StyleProperty, "Quiet");
+        pin.Click += (_, _) => TogglePin(folder);
+        return new Grid { Children = { button, pin } };
     }
 
     // Background

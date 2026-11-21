@@ -70,6 +70,8 @@ public static class RosterSync
     public static readonly IReadOnlyDictionary<string, string[]> RowKeys = new Dictionary<string, string[]>(StringComparer.Ordinal)
     {
         [GearColours.TableName] = ["team", "equipment", "era", "variant"],
+        // One kit slot per team, art id, brand and variant (docs/UNIFORM_SLOTS.md), so a new slot is added to the roster too.
+        [UniformSlots.TableName] = ["teamid", "teamartid", "style", "variant"],
     };
 
     /// <summary>The game's save folder under a shadPS4 user folder.</summary>
@@ -107,6 +109,9 @@ public static class RosterSync
             if (!gameTables.TryGetValue(rosterTable.ShortName, out var baseTable) || !projectTables.TryGetValue(rosterTable.ShortName, out var projectTable))
                 continue;
             var name = rosterTable.Label;
+            // Player tables are matched by player and team, not by index (Roster.PlayerSync, after this loop).
+            if (Roster.PlayerSync.Tables.Contains(name))
+                continue;
             if (!SameLayout(baseTable, projectTable) || !SameLayout(baseTable, rosterTable))
             {
                 if (Differs(game, baseTable, project, projectTable))
@@ -166,6 +171,8 @@ public static class RosterSync
                 }
             }
         }
+        if (game.Tables.Any(t => t.Label == Roster.RosterBook.BioTable))
+            Roster.PlayerSync.Plan(game, project, roster, changes, skipped);
         return new RosterSyncPlan(changes, adds, skipped);
     }
 

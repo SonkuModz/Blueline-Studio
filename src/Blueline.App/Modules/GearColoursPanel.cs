@@ -321,23 +321,18 @@ public sealed class GearColoursPanel : UserControl
 
         if (resolution.Link != GearLink.Own)
         {
-            if (kit.GearVariant == null)
-                _body.Children.Add(Dim("Jersey variant 2 has no gear number (gear 2 is Away), so this kit cannot have a row of its own."));
-            else
+            var reuse = _gear.UnusedRow(_team!, part);
+            var own = new Button
             {
-                var reuse = _gear.UnusedRow(_team!, part);
-                var own = new Button
-                {
-                    Content = "Give this kit its own row",
-                    HorizontalAlignment = HorizontalAlignment.Left,
-                    Margin = new Thickness(0, 6, 0, 0),
-                    ToolTip = reuse != null
-                        ? $"Points unused row {reuse.Index} (variant {reuse.Variant}, worn by no current kit) at this kit, starting from the colours it shows now. Seen working in game."
-                        : $"Adds a new row in the table's spare space ({_gear.SpareRows:N0} left), starting from the colours this kit shows now. Not yet seen in game: check it before sharing.",
-                };
-                own.Click += (_, _) => GiveOwnRow(kit, part);
-                _body.Children.Add(own);
-            }
+                Content = "Give this kit its own row",
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(0, 6, 0, 0),
+                ToolTip = reuse != null
+                    ? $"Points unused row {reuse.Index} (variant {reuse.Variant}, worn by no current kit) at this kit, starting from the colours it shows now. Seen working in game."
+                    : $"Adds a new row in the table's spare space ({_gear.SpareRows:N0} left), starting from the colours this kit shows now. Seen working in game.",
+            };
+            own.Click += (_, _) => GiveOwnRow(kit, part);
+            _body.Children.Add(own);
         }
         if (resolution.Row != null)
             _body.Children.Add(RowEditor(resolution.Row, part));

@@ -585,7 +585,7 @@ game for some kits. Where does the game get them?
 
 1. **Gloves are `equipment` 5 and helmets are `equipment` 8**, one row per kit (`era` + `variant`). The
    equipment labels from `create_team.json` (4 gloves, 7 helmet) do not apply to this table.
-2. **Gear `variant` 1 is Home, 2 is Away, 3 and up match the jersey variant, and 0 is the fallback** for a kit
+2. **Gear `variant` = adidas jersey `variant` + 1 (1 Home, 2 Away, 3 the `two` kit ...), and 0 is the fallback** (corrected 2026-11-20, docs/UNIFORM_SLOTS.md; first written as "3 and up match the jersey variant") for a kit
    with no row of its own. Toronto and St. Louis have no Home or Away glove row, so both kits use the variant 0
    glove row and can't differ. That is why only specific kits seemed uneditable. Re-pointing an unused row's `variant`
    gives the kit its own colour (tested).
@@ -622,7 +622,7 @@ game boots on `RosterCustom0`.
 |---|---|---|
 | `stockteamequipmenttable` (5,188 rows) | `nhl_game.db`, `initial_experience.db`, both roster saves | `team`, `equipment`, `era`, `variant`, `brand`, `zone1`-`zone15` as `0xRRGGBB` |
 | `customteamequipmenttable`, `leagueteamequipmenttable` | `nhl_game.db`, `RosterCustom0` | the same, for created teams and franchise leagues (league one empty) |
-| `stockteamjerseys` (1,574) | the same four files | per kit: `teamid`, `style` (0 adidas, 1 rbk, 2 nineties, from the kit sheets), `variant` (0 home, 1 away, 2 `two` ...), `helmetlogo`, `islightcolor` |
+| `stockteamjerseys` (1,574) | the same four files | per kit: `teamid`, `style` (0 nineties, 1 rbk, 2 adidas; corrected 2026-11-20), `variant` (0 home, 1 away, 2 `two` ...), `helmetlogo`, `islightcolor` |
 | `exhibitionskaterequipment` | every roster-shaped file | per player `gloves` and `helmetbrand`: **brands only, no colour** |
 | `exhibitionresortskaterextras` | `nhl_game.db`, `initial_experience.db`, saves | `glovezone1`-`15color`, `helmetzone1`-`3color` per art id, light and dark. All `1B1B1B` placeholders; World of CHEL casual gear |
 

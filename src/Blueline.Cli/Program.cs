@@ -1,6 +1,8 @@
 using BCnEncoder.Encoder;
 using Blueline.Core;
 using Blueline.Core.Emulator;
+using Blueline.Core.Franchise;
+using Blueline.Core.Roster;
 using Blueline.Core.Teams;
 using Blueline.Formats.Eb;
 using Blueline.Formats.Tdb;
@@ -40,7 +42,25 @@ const string Usage = """
     blueline gear <game> <team> [<project> edit ...]   Show or change a team's glove and helmet colours per kit.
         Edits: gloves:Home=RRGGBB (main colour of the row that kit reads), gloves:Home.z7=RRGGBB (one zone),
         own:helmet:Away (give the kit its own row), row:900=RRGGBB or row:900.z7=RRGGBB (by the row's index field)
+    blueline slots <game> <team> [project]       List a team's uniform slots in menu order, and the free kit names a new slot can take
+    blueline slot-set <project> <game> <team> <slot> key=value ...   Change a slot (by menu number, 1 first): label=Third (or a
+                                                 number), name="Green Test Kit" (its own name in the jersey select), position=3, light=yes|no, default=yes|no
+    blueline slot-add <project> <game> <team> <kit name | adidas | rbk | nineties> [jersey=<png>] [copy=<slot>] [menu=<png>] [label=Alternate] [name=<text>] [position=3]
+                                                 Add a slot on a free kit name (a brand takes its first free one), writing every file
+                                                 it has: the jersey sheet (normal and coeff made from it) and the rest copied from slot <copy>
+    blueline slot-remove <project> <game> <team> <slot>   Remove a slot (by menu number)
+    blueline players <game> [project | roster save] [team=EDM pos=C name=text min=80 league=0 active=yes]   List players
+    blueline player <game> <name | game_id> [<project> key=value ...]   Show or change everything about a player. Keys: bio.lastname,
+                                                 ai.c_speed, skatergear.stick, roster.<team>.captain, or jersey=97, archetype=Sniper,
+                                                 ratings=+3, move=EDM or move=<from>:<to> (clears his lines there)
+    blueline lines <game> <team> [<project> slot=player ...]   Show or set a team's lines, e.g. l1c=McDavid pp1rd=- (empty)
+    blueline players-set <project> <game> [filters] -- key=value ...   Bulk edit every player the filters match, as one undo step
     blueline roster-sync <game> <project> <roster save folder> [--write]   List (or write, with --write) the project's database edits into a roster save such as RosterCustom0; a backup is kept
+    blueline franchise-immersion <project> <game> [--write]            Put 2025-26 arenas, real NHL insiders and cleaned news text into a project
+    blueline roster-league-sync <game> <project> <roster save> [--write]   Copy the project's NHL/AHL club names and AHL affiliates into a roster save (what a new Franchise starts from)
+    blueline franchise-info <franchise save folder>                     Show a Franchise save (BeAGM0): file info, blocks and league tables
+    blueline franchise-repack <franchise save folder> <out folder>      Write the save unchanged into a new folder (the first in-game test of the writer)
+    blueline franchise-sync <game> <source> <franchise save> <out folder>   EXPERIMENTAL: the result crashed the game on load (2026-11-18). Copies team names, AHL affiliates and arenas into a copy of a Franchise save
     blueline shad-config <config.toml|.json> [key=value ...]   Show or change shadPS4 settings in that file
     blueline horns <game> [project]              List the goal horns, the teams whose arena plays each, and the horn bank's samples
     blueline horn-export <game> <project|-> <folder> [sample ...]   Write horn samples as WAV (all of them when none are named)
@@ -57,6 +77,8 @@ const string Usage = """
                                                  --project writes it into a project; --model also adds the full-ice model there
     blueline trucolor <game> [league] [options]  Team colours from TruColor (trucolor.net): list leagues, preview a league, apply into a project
                                                  (run "blueline trucolor" alone for its options)
+    blueline pack-export|pack-info|pack-check|pack-install|pack-list|pack-order|pack-enable|pack-disable|pack-uninstall|pack-slots
+                                                 Mod packs (.blpack): run "blueline pack" alone for their options
     """;
 
 try
@@ -106,6 +128,18 @@ int Run(string[] a)
         case "new" when a.Length == 3:
             ModProject.Create(a[1], a[2]);
             return 0;
+        case "texture-import" when a.Length == 5:
+            {
+                // A PNG over one of the game's textures, encoded in that texture's own format and size.
+                var project = ModProject.Open(a[1]);
+                using var vfs = Mount(a[2]);
+                var original = vfs.Find(a[3]) is { } file ? vfs.ReadContent(file) : throw new KeyNotFoundException($"No such path: {a[3]}");
+                var result = Blueline.Formats.Textures.TexturePipeline.Import(original, Blueline.Formats.Textures.PngFile.Read(File.ReadAllBytes(a[4])),
+                    BCnEncoder.Encoder.CompressionQuality.BestQuality);
+                project.Set(a[3], result.Gnf, $"Texture from {Path.GetFileName(a[4])}");
+                Console.WriteLine($"{a[3]}  {result.Gnf.Length:N0} bytes{(result.Resized ? "  (resized to fit)" : "")}  {result.Elapsed.TotalSeconds:N1} s");
+                return 0;
+            }
         case "set" when a.Length == 4:
             ModProject.Open(a[1]).Set(a[2], File.ReadAllBytes(a[3]), $"From {Path.GetFileName(a[3])}");
             return 0;
@@ -117,7 +151,13 @@ int Run(string[] a)
                 workspace.SetGame(vfs);
                 workspace.SetProject(project);
                 var dictionary = new LocDictionary(workspace.ReadCurrent(a[3]) ?? throw new KeyNotFoundException($"No such path: {a[3]}"));
-                dictionary.SetText(a[4], a[5]);
+                if (dictionary.TryGet(a[4], out _))
+                    dictionary.SetText(a[4], a[5]);
+                else
+                {
+                    dictionary.AddKey(a[4], a[5]);
+                    Console.WriteLine($"Added the key {a[4]}; the game had no string with it.");
+                }
                 project.Set(a[3], dictionary.Save(), $"Text of {a[4]}");
                 return 0;
             }
@@ -559,6 +599,113 @@ int Run(string[] a)
                 }
                 return 0;
             }
+        case "slots" when a.Length is 3 or 4:
+            {
+                using var vfs = Mount(a[1]);
+                var catalog = OpenTeams(vfs);
+                var team = catalog.Find(a[2]) ?? throw new KeyNotFoundException($"No such team: {a[2]}");
+                var slots = OpenSlots(vfs, catalog, a.Length == 4 ? ModProject.Open(a[3]) : null).Slots;
+                var list = slots.SlotsOf(team);
+                var nameProject = a.Length == 4 ? ModProject.Open(a[3]) : null;
+                var nameTable = new LocDictionary(nameProject != null ? ReadCurrent(vfs, nameProject, SlotNames.DictionaryPath) : vfs.ReadContent(vfs.Find(SlotNames.DictionaryPath)!));
+                Console.WriteLine($"{team.Name}: {list.Count} of {UniformSlots.MaxSlotsPerTeam} slots ({slots.SpareRows} spare rows in the table)");
+                for (var i = 0; i < list.Count; i++)
+                {
+                    var s = list[i];
+                    Console.WriteLine($"{i + 1,3}. {s.Label,-16} {s.BrandLabel,-8} {s.KitName ?? $"art {s.ArtId} variant {s.Variant}",-34} jersey {s.JerseyIndex,2}"
+                        + (s.IsDefault ? (s.Variant == 0 ? "  default home" : "  default away") : "") + (s.IsLight ? "  light" : "")
+                        + (SlotNames.NameOf(nameTable, s) is { } shown ? $"  \"{shown}\"" : "") + (s.ArtId != team.ArtId ? $"  (borrowed: art {s.ArtId})" : "") + (slots.IsDrawable(s) ? "" : "  NOT DRAWN: the vault has no texture pack for it"));
+                }
+                var free = slots.FreeKits(team);
+                Console.WriteLine($"{free.Count} free kit names; first ones:");
+                foreach (var f in free.Take(15))
+                    Console.WriteLine("     " + f);
+                return 0;
+            }
+        case "slot-set" when a.Length >= 6:
+            {
+                var project = ModProject.Open(a[1]);
+                using var vfs = Mount(a[2]);
+                var catalog = OpenTeams(vfs);
+                var team = catalog.Find(a[3]) ?? throw new KeyNotFoundException($"No such team: {a[3]}");
+                var (slots, _) = OpenSlots(vfs, catalog, project);
+                var slot = SlotAt(slots, team, a[4]);
+                LocDictionary? names = null;
+                foreach (var edit in a.Skip(5))
+                {
+                    var (key, value) = (edit[..edit.IndexOf('=')].ToLowerInvariant(), edit[(edit.IndexOf('=') + 1)..]);
+                    if (key == "name")
+                    {
+                        names ??= new LocDictionary(ReadCurrent(vfs, project, SlotNames.DictionaryPath));
+                        Console.WriteLine($"{edit}: {(SlotNames.SetName(names, slot.Style, slot.ArtId, slot.Variant, value) ? "added" : "changed")} {SlotNames.KeyOf(slot)}");
+                        continue;
+                    }
+                    slot = key switch
+                    {
+                        "label" => slots.Set(slot, locString: LabelNumber(value)),
+                        "light" => slots.Set(slot, light: YesNo(value)),
+                        "default" => slots.Set(slot, isDefault: YesNo(value)),
+                        "position" => slots.Move(slot, int.Parse(value) - 1),
+                        _ => throw new ArgumentException($"Unknown slot setting {key}; use label, position, light or default."),
+                    };
+                    Console.WriteLine($"{edit}: {slot}");
+                }
+                var setItems = new List<(string, byte[], string)> { (TeamCatalog.DatabasePath, slots.Save(), $"{team.Name} uniform slots") };
+                if (names != null)
+                    setItems.Add((SlotNames.DictionaryPath, names.Save(), $"{team.Name} kit name"));
+                project.SetMany(setItems, $"{team.Name} uniform slots");
+                project.Save();
+                Console.WriteLine($"Saved to {project.Folder}");
+                return 0;
+            }
+        case "slot-add" when a.Length >= 5:
+            {
+                var project = ModProject.Open(a[1]);
+                using var vfs = Mount(a[2]);
+                var catalog = OpenTeams(vfs);
+                var team = catalog.Find(a[3]) ?? throw new KeyNotFoundException($"No such team: {a[3]}");
+                var (slots, gear) = OpenSlots(vfs, catalog, project);
+                var options = a.Skip(5).Select(o => (Key: o[..o.IndexOf('=')].ToLowerInvariant(), Value: o[(o.IndexOf('=') + 1)..])).ToDictionary(o => o.Key, o => o.Value);
+                var free = slots.FreeKits(team);
+                var kit = UniformSlots.StyleOf(a[4]) is { } style
+                    ? free.FirstOrDefault(f => f.Style == style) ?? throw new InvalidOperationException($"No free {a[4]} kit names are left.")
+                    : free.FirstOrDefault(f => f.Name == a[4]) ?? throw new KeyNotFoundException($"{a[4]} is not a free kit name; run \"blueline slots\" to list them.");
+                var copy = options.TryGetValue("copy", out var c) ? SlotAt(slots, team, c) : null;
+                var art = UniformSlotArt.Make(vfs, kit, new SlotArtOptions(
+                    options.TryGetValue("jersey", out var j) ? ImageLoader.Load(j) : null, copy, options.TryGetValue("menu", out var m) ? ImageLoader.Load(m) : null));
+                var added = slots.Add(team, kit, options.TryGetValue("label", out var l) ? LabelNumber(l) : 6,
+                    options.TryGetValue("position", out var p) ? int.Parse(p) - 1 : null, gear);
+                Console.WriteLine($"Added {added} on {kit.Name} at menu position {added.Order + 1}, jersey {added.JerseyIndex}");
+                foreach (var file in art)
+                    Console.WriteLine($"  {(file.Content == null ? "-" : "+")} {file.Path}  {file.Note}");
+                var items = art.Where(f => f.Content != null).Select(f => (f.Path, f.Content!, $"{team.Name} slot {kit.Name}")).ToList();
+                items.Add((TeamCatalog.DatabasePath, slots.Save(), $"{team.Name} uniform slot {kit.Name}"));
+                if (options.TryGetValue("name", out var kitName))
+                {
+                    var names = new LocDictionary(ReadCurrent(vfs, project, SlotNames.DictionaryPath));
+                    SlotNames.SetName(names, kit.Style, kit.ArtId, kit.Variant, kitName);
+                    items.Add((SlotNames.DictionaryPath, names.Save(), $"{team.Name} kit name {kitName}"));
+                    Console.WriteLine($"  Named \"{kitName}\" ({SlotNames.KeyOf(kit.Style, kit.ArtId, kit.Variant)})");
+                }
+                project.SetMany(items, $"Add {team.Name} uniform slot");
+                project.Save();
+                Console.WriteLine($"Saved to {project.Folder}");
+                return 0;
+            }
+        case "slot-remove" when a.Length == 5:
+            {
+                var project = ModProject.Open(a[1]);
+                using var vfs = Mount(a[2]);
+                var catalog = OpenTeams(vfs);
+                var team = catalog.Find(a[3]) ?? throw new KeyNotFoundException($"No such team: {a[3]}");
+                var (slots, _) = OpenSlots(vfs, catalog, project);
+                var slot = SlotAt(slots, team, a[4]);
+                slots.Remove(slot);
+                project.Set(TeamCatalog.DatabasePath, slots.Save(), $"{team.Name} remove uniform slot");
+                project.Save();
+                Console.WriteLine($"Removed {slot}; saved to {project.Folder}");
+                return 0;
+            }
         case "trucolor" when a.Length == 1:
             Console.WriteLine(TruColorCommand.Usage);
             return 0;
@@ -601,6 +748,97 @@ int Run(string[] a)
                 }
                 return 0;
             }
+        case "franchise-immersion" when a.Length is 3 or 4 && (a.Length == 3 || a[3] == "--write"):
+            {
+                var project = ModProject.Open(a[1]);
+                using var vfs = Mount(a[2]);
+                var workspace = new Workspace(new SessionLog());
+                workspace.SetGame(vfs);
+                workspace.SetProject(project);
+                var result = FranchiseImmersion.Apply(project, workspace, a.Length == 4);
+                foreach (var line in result.Log)
+                    Console.WriteLine(line);
+                Console.WriteLine($"Arena cells: {result.ArenaCells}; insider cells: {result.AuthorCells}; text lines: {result.TextLines}; capacity rows: {result.CapacityRows}");
+                if (result.ArenasNotFound.Count > 0)
+                    Console.WriteLine($"No club found for: {string.Join(", ", result.ArenasNotFound)}");
+                Console.WriteLine(a.Length == 4 ? $"Saved to {project.Folder} as one undo step." : "Dry run; add --write to save it into the project.");
+                return 0;
+            }
+        case "franchise-info" when a.Length == 2:
+            {
+                var save = FranchiseSave.Read(a[1]);
+                Console.WriteLine(save.FileInfo);
+                Console.WriteLine($"Blocks: {string.Join(", ", save.BlockSizes.Select((s, i) => $"{i}: {s:N0}" + (i == save.DatabaseBlock ? " (league TDB)" : "")))}; tail {save.TailLength:N0}");
+                var db = TdbFile.Parse((byte[])save.Database.Clone());
+                var checks = db.VerifyCrcs();
+                Console.WriteLine($"{db.Tables.Count} tables, {checks.Count(c => c.Matches)} of {checks.Count} checksums verify");
+                foreach (var table in db.Tables.OrderBy(t => t.ShortName, StringComparer.Ordinal))
+                    Console.WriteLine($"  {table.ShortName} {table.Count,6}/{table.Allocated}");
+                return 0;
+            }
+        case "franchise-repack" when a.Length == 3:
+            {
+                var save = FranchiseSave.Read(a[1]);
+                RefuseSameFolder(a[1], a[2]);
+                save.WriteTo(a[2], save.Database);
+                var again = FranchiseSave.Read(a[2]);
+                Console.WriteLine(again.Database.AsSpan().SequenceEqual(save.Database) ? $"Written to {a[2]}; it reads back with the same league database." : "Written, but it reads back differently.");
+                return 0;
+            }
+        case "franchise-sync" when a.Length == 5:
+            {
+                using var vfs = Mount(a[1]);
+                var meta = System.Text.Encoding.UTF8.GetString(vfs.ReadContent(vfs.Find(TeamCatalog.MetaPath)!));
+                byte[] source;
+                if (RosterSave.IsRosterSave(a[2]) && !FranchiseSave.IsFranchiseSave(a[2]))
+                    source = RosterSave.Read(a[2]).Database;
+                else
+                {
+                    var project = ModProject.Open(a[2]);
+                    source = project.TryGet(TeamCatalog.DatabasePath, out var stored) ? project.ReadBlob(stored) : vfs.ReadContent(vfs.Find(TeamCatalog.DatabasePath)!);
+                }
+                var from = TdbFile.Parse((byte[])source.Clone());
+                from.ApplyMeta(meta);
+                var save = FranchiseSave.Read(a[3]);
+                var league = TdbFile.Parse((byte[])save.Database.Clone());
+                league.ApplyMeta(meta);
+                var plan = FranchiseSync.Plan(from, league);
+                Console.Write(FranchiseSync.Describe(plan));
+                Console.WriteLine($"{plan.Count} cell(s) to change.");
+                if (plan.Count > 0)
+                {
+                    RefuseSameFolder(a[3], a[4]);
+                    FranchiseSync.Apply(league, plan);
+                    save.WriteTo(a[4], league.Data);
+                    Console.WriteLine($"Written to {a[4]}. The original save was not changed.");
+                }
+                return 0;
+            }
+        case "roster-league-sync" when a.Length is 4 or 5 && (a.Length == 4 || a[4] == "--write"):
+            {
+                using var vfs = Mount(a[1]);
+                var project = ModProject.Open(a[2]);
+                var meta = System.Text.Encoding.UTF8.GetString(vfs.ReadContent(vfs.Find(TeamCatalog.MetaPath)!));
+                var source = TdbFile.Parse((byte[])(project.TryGet(TeamCatalog.DatabasePath, out var stored) ? project.ReadBlob(stored) : vfs.ReadContent(vfs.Find(TeamCatalog.DatabasePath)!)).Clone());
+                source.ApplyMeta(meta);
+                var save = RosterSave.Read(a[3]);
+                var roster = TdbFile.Parse((byte[])save.Database.Clone());
+                roster.ApplyMeta(meta);
+                var plan = FranchiseSync.PlanRoster(source, roster);
+                foreach (var change in plan.Pending)
+                    Console.WriteLine($"{change.Table} #{change.Index} {change.Field.Label}: {RosterCellChange.Show(change.Field, change.Roster)} -> {RosterCellChange.Show(change.Field, change.Project)}");
+                foreach (var s in plan.Skipped)
+                    Console.WriteLine("Skipped: " + s);
+                Console.WriteLine($"To write: {plan.WhatIsLeft} ({plan.Changes.Count - plan.Pending.Count} already in the roster).");
+                if (a.Length == 5)
+                {
+                    if (ShadInstall.AnyRunning())
+                        throw new InvalidOperationException("shadPS4 is running. Close the game before writing its roster save.");
+                    var backup = RosterSync.Write(save, plan, meta, Path.Combine(Path.GetDirectoryName(Path.GetFullPath(a[3]).TrimEnd('\\', '/'))! + "-backups"));
+                    Console.WriteLine(backup == null ? "Nothing to write." : $"Written. The old save is in {backup}");
+                }
+                return 0;
+            }
         case "roster-sync" when a.Length is 4 or 5 && (a.Length == 4 || a[4] == "--write"):
             {
                 using var vfs = Mount(a[1]);
@@ -621,6 +859,158 @@ int Run(string[] a)
                         throw new InvalidOperationException("shadPS4 is running. Close the game before writing its roster save.");
                     var backup = RosterSync.Write(save, plan, meta, Path.Combine(Path.GetDirectoryName(Path.GetFullPath(a[3]).TrimEnd('\\', '/'))! + "-backups"));
                     Console.WriteLine(backup == null ? "Nothing to write." : $"Written. The old save is in {backup}");
+                }
+                return 0;
+            }
+        case "players" when a.Length >= 2:
+            {
+                using var vfs = Mount(a[1]);
+                var (book, _, _) = OpenRoster(vfs, a.Skip(2).FirstOrDefault(x => !x.Contains('=')));
+                var filters = a.Skip(2).Where(x => x.Contains('=')).Select(x => (Key: x[..x.IndexOf('=')].ToLowerInvariant(), Value: x[(x.IndexOf('=') + 1)..])).ToList();
+                var shown = 0;
+                foreach (var p in book.Players().Where(p => RosterFilter(book, p, filters)).OrderBy(p => p.Club).ThenBy(p => p.Position).ThenByDescending(p => p.Overall))
+                {
+                    Console.WriteLine($"{p.GameId,6}  {Abbr(book, p.Club),-4} {"CLRDG"[Math.Clamp(p.Position, 0, 4)]}  #{p.Jersey,-3} {p.Overall,3}  {p.Name}{(p.Active ? "" : "  (inactive)")}");
+                    shown++;
+                }
+                Console.WriteLine($"{shown} player(s). Years shift: {book.YearShift}.");
+                return 0;
+            }
+        case "player" when a.Length >= 3:
+            {
+                using var vfs = Mount(a[1]);
+                var project = a.Length >= 5 || (a.Length == 4 && !a[3].Contains('=')) ? a[3] : null;
+                var (book, choices, opened) = OpenRoster(vfs, project);
+                var player = OnePlayer(book, a[2]);
+                var edits = a.Skip(project == null ? 3 : 4).ToList();
+                if (edits.Count > 0 && opened == null)
+                    throw new ArgumentException("Give a project folder before the edits, so they are saved somewhere.");
+                foreach (var edit in edits)
+                {
+                    var split = edit.IndexOf('=');
+                    if (split <= 0)
+                        throw new ArgumentException($"Not key=value: {edit}");
+                    var (key, text) = (edit[..split].ToLowerInvariant(), edit[(split + 1)..]);
+                    switch (key)
+                    {
+                        case "move":
+                            {
+                                var parts = text.Split(':');
+                                var from = parts.Length == 2 ? TeamOf(book, parts[0]) : book.Club(player.GameId) ?? throw new InvalidOperationException($"{player.Name} has no NHL or AHL club; use move=<from>:<to>.");
+                                var to = TeamOf(book, parts[^1]);
+                                book.Move(player.GameId, from, to);
+                                Console.WriteLine($"Moved {player.Name}: {book.TeamName(from)} -> {book.TeamName(to)} (lines cleared; he is a scratch there).");
+                                break;
+                            }
+                        case "jersey" or "number":
+                            book.SetJersey(player.GameId, int.Parse(text));
+                            Console.WriteLine($"Number: {text} (bio and every team)");
+                            break;
+                        case "archetype":
+                            {
+                                var style = choices.Get(player.IsGoalie ? RosterChoices.GoalieStyle : RosterChoices.SkaterStyle)!
+                                    .FirstOrDefault(c => c.Name.Equals(text, StringComparison.OrdinalIgnoreCase) || c.Value.ToString() == text)
+                                    ?? throw new ArgumentException($"{text} is not an archetype.");
+                                book.SetArchetype(player.GameId, style.Value);
+                                Console.WriteLine($"Archetype: {style.Name} (AI row and every team)");
+                                break;
+                            }
+                        case "ratings":
+                            Console.WriteLine($"Ratings {text}: {book.AddToRatings([player.GameId], int.Parse(text.TrimStart('+')))} changed");
+                            break;
+                        default:
+                            {
+                                var field = book.Find(player.GameId, key) ?? throw new KeyNotFoundException($"{player.Name} has no {key}. Keys look like bio.lastname, ai.c_speed, skatergear.stick or roster.11.captain.");
+                                var changed = book.Set(field, book.Parse(field, text, choices));
+                                Console.WriteLine($"{field.Key}: {book.Format(changed, choices)}");
+                                break;
+                            }
+                    }
+                }
+                player = book.Summary(player.GameId)!;
+                Console.WriteLine($"== {player.Name} (game_id {player.GameId}), {book.TeamName(player.Club)}, portrait {RosterSource.PortraitPath(player.ArtId)}{(vfs.Find(RosterSource.PortraitPath(player.ArtId)) == null ? " (missing)" : "")}");
+                Console.WriteLine("   Teams: " + string.Join(", ", book.Memberships(player.GameId).Select(m => $"{book.TeamName(m.Team)} ({m.Team})")));
+                string? group = null;
+                foreach (var field in book.FieldsOf(player.GameId))
+                {
+                    if (field.Group != group)
+                        Console.WriteLine($"-- {group = field.Group}");
+                    Console.WriteLine($"{field.Key,-34} {field.Label,-34} {book.Format(field, choices)}");
+                }
+                foreach (var m in book.Memberships(player.GameId))
+                {
+                    var slots = book.Lines(m.Team).Where(l => l.Value == player.GameId).Select(l => RosterBook.SlotLabel(l.Key)).ToList();
+                    Console.WriteLine($"   {book.TeamName(m.Team)} slots: {(slots.Count == 0 ? "none" : string.Join(", ", slots))}");
+                }
+                if (edits.Count > 0)
+                {
+                    opened!.Set(TeamCatalog.DatabasePath, book.Save(), $"Roster: {player.Name}");
+                    opened.Save();
+                    Console.WriteLine($"Saved to {opened.Folder}");
+                }
+                return 0;
+            }
+        case "lines" when a.Length >= 3:
+            {
+                using var vfs = Mount(a[1]);
+                var project = a.Length >= 4 ? a[3] : null;
+                var (book, _, opened) = OpenRoster(vfs, project);
+                var team = TeamOf(book, a[2]);
+                foreach (var edit in a.Skip(4))
+                {
+                    var split = edit.IndexOf('=');
+                    if (split <= 0)
+                        throw new ArgumentException($"Not slot=player: {edit}");
+                    var who = edit[(split + 1)..];
+                    long? gid = who is "" or "-" or "none" ? null : OnePlayer(book, who).GameId;
+                    book.SetSlot(team, edit[..split].ToLowerInvariant(), gid);
+                    Console.WriteLine($"{RosterBook.SlotLabel(edit[..split].ToLowerInvariant())}: {(gid is { } g ? book.Summary(g)!.Name : "nobody")}");
+                }
+                var lines = book.Lines(team);
+                Console.WriteLine($"== {book.TeamName(team)} ({team}): {book.PlayersOn(team).Count} players");
+                foreach (var slot in book.LineSlots)
+                    Console.WriteLine($"{slot,-9} {RosterBook.SlotLabel(slot),-20} {(lines.TryGetValue(slot, out var g) ? book.Summary(g)!.Name : "-")}");
+                var placed = lines.Values.ToHashSet();
+                var unplaced = book.PlayersOn(team).Where(g => !placed.Contains(g)).Select(g => book.Summary(g)!.Name).ToList();
+                if (unplaced.Count > 0)
+                    Console.WriteLine("In no slot: " + string.Join(", ", unplaced));
+                if (a.Length > 4)
+                {
+                    opened!.Set(TeamCatalog.DatabasePath, book.Save(), $"Roster: {book.TeamName(team)} lines");
+                    opened.Save();
+                    Console.WriteLine($"Saved to {opened.Folder}");
+                }
+                return 0;
+            }
+        case "players-set" when a.Length >= 5:
+            {
+                using var vfs = Mount(a[2]);
+                var (book, choices, opened) = OpenRoster(vfs, a[1]);
+                var filters = a.Skip(3).TakeWhile(x => x != "--").Where(x => x.Contains('=')).Select(x => (Key: x[..x.IndexOf('=')].ToLowerInvariant(), Value: x[(x.IndexOf('=') + 1)..])).ToList();
+                var sets = a.SkipWhile(x => x != "--").Skip(1).ToList();
+                if (sets.Count == 0)
+                    throw new ArgumentException("Put the changes after --, e.g. players-set <project> <game> team=EDM -- ratings=+2 bio.weight=200");
+                var players = book.Players().Where(p => RosterFilter(book, p, filters)).ToList();
+                var cells = 0;
+                foreach (var p in players)
+                    foreach (var edit in sets)
+                    {
+                        var split = edit.IndexOf('=');
+                        var (key, text) = (edit[..split].ToLowerInvariant(), edit[(split + 1)..]);
+                        if (key == "ratings")
+                            cells += book.AddToRatings([p.GameId], int.Parse(text.TrimStart('+')));
+                        else if (book.Find(p.GameId, key) is { } field)
+                        {
+                            book.Set(field, book.Parse(field, text, choices));
+                            cells++;
+                        }
+                    }
+                Console.WriteLine($"{players.Count} player(s), {cells} cell(s) changed.");
+                if (cells > 0)
+                {
+                    opened!.Set(TeamCatalog.DatabasePath, book.Save(), $"Roster: bulk edit of {players.Count} players");
+                    opened.Save();
+                    Console.WriteLine($"Saved to {opened.Folder} as one undo step.");
                 }
                 return 0;
             }
@@ -932,10 +1322,91 @@ int Run(string[] a)
                 }
                 return 0;
             }
+        case "pack":
+            Console.WriteLine(PackCommand.Usage);
+            return 0;
+        case string verb when verb.StartsWith("pack-", StringComparison.Ordinal):
+            return PackCommand.Run(a);
         default:
             Console.WriteLine(Usage);
             return a.Length == 0 ? 0 : 1;
     }
+}
+
+// The Franchise commands always write a copy, never the save they read.
+static void RefuseSameFolder(string from, string to)
+{
+    if (Path.GetFullPath(from).TrimEnd('\\', '/').Equals(Path.GetFullPath(to).TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase))
+        throw new ArgumentException("Write to another folder than the save being read.");
+    if (ShadInstall.AnyRunning())
+        throw new InvalidOperationException("shadPS4 is running. Close the game before writing a save.");
+}
+
+// ---- Roster editor helpers
+
+// The roster from a project folder (edits are saved there), a roster save folder (read only), or the game itself.
+static (RosterBook Book, RosterChoices Choices, ModProject? Project) OpenRoster(VirtualFileSystem vfs, string? source)
+{
+    RosterBook book;
+    ModProject? project = null;
+    if (source != null && RosterSave.IsRosterSave(source))
+        book = RosterSource.OpenSave(vfs, source, RosterSource.Open(vfs, null));
+    else
+    {
+        project = source == null ? null : ModProject.Open(source);
+        book = RosterSource.Open(vfs, project);
+    }
+    return (book, RosterSource.Choices(vfs, book), project);
+}
+
+static PlayerSummary OnePlayer(RosterBook book, string who)
+{
+    var found = RosterSource.Find(book, who);
+    return found.Count switch
+    {
+        0 => throw new KeyNotFoundException($"No player matches {who}."),
+        1 => found[0],
+        _ => throw new ArgumentException($"{found.Count} players match {who}; use a game_id: " + string.Join(", ", found.Take(12).Select(p => $"{p.GameId} {p.Name} ({book.TeamName(p.Club)})"))),
+    };
+}
+
+// A team by index, abbreviation (NHL and AHL clubs first) or full name.
+static int TeamOf(RosterBook book, string text)
+{
+    if (int.TryParse(text, out var index) && book.Teams.ContainsKey(index))
+        return index;
+    var team = book.Teams.Values.FirstOrDefault(t => t.Abbreviation.Equals(text, StringComparison.OrdinalIgnoreCase) && RosterBook.ClubLeagues.Contains(t.League))
+        ?? book.Teams.Values.FirstOrDefault(t => t.Abbreviation.Equals(text, StringComparison.OrdinalIgnoreCase))
+        ?? book.Teams.Values.FirstOrDefault(t => t.Name.Equals(text, StringComparison.OrdinalIgnoreCase));
+    return team?.Index ?? throw new KeyNotFoundException($"No team {text}.");
+}
+
+static string Abbr(RosterBook book, int team) => book.Teams.TryGetValue(team, out var t) ? t.Abbreviation : team < 0 ? "-" : team.ToString();
+
+// Filters: team=EDM, pos=C|LW|RW|D|G|F, name=text, min=80 (overall), league=0, active=yes.
+static bool RosterFilter(RosterBook book, PlayerSummary p, IReadOnlyList<(string Key, string Value)> filters)
+{
+    foreach (var (key, value) in filters)
+    {
+        var ok = key switch
+        {
+            "team" => p.Club == TeamOf(book, value) || book.MembershipOn(p.GameId, TeamOf(book, value)) != null,
+            "pos" => value.ToUpperInvariant() switch
+            {
+                "C" => p.Position == 0, "LW" => p.Position == 1, "RW" => p.Position == 2, "D" => p.Position == 3, "G" => p.Position == 4,
+                "F" => p.Position <= 2, _ => throw new ArgumentException($"pos is C, LW, RW, D, G or F, not {value}."),
+            },
+            "name" => p.Name.Contains(value, StringComparison.OrdinalIgnoreCase),
+            "min" => p.Overall >= int.Parse(value),
+            "max" => p.Overall <= int.Parse(value),
+            "league" => book.Teams.TryGetValue(p.Club, out var t) && t.League == int.Parse(value),
+            "active" => p.Active == value.ToLowerInvariant() is "1" or "yes" or "true",
+            _ => throw new ArgumentException($"Unknown filter {key}. Use team, pos, name, min, max, league or active."),
+        };
+        if (!ok)
+            return false;
+    }
+    return true;
 }
 
 static VirtualFileSystem Mount(string folder) => VirtualFileSystem.Mount(GameInstall.Open(folder));
@@ -976,6 +1447,37 @@ static Blueline.Formats.Textures.RgbaImage ReadTexture(VirtualFileSystem vfs, st
     var texture = Blueline.Formats.Textures.GameTexture.TryOpen(vfs.ReadContent(file)) ?? throw new InvalidDataException($"{path} is not a texture this tool can read.");
     return texture.DecodeMip(0);
 }
+
+static (UniformSlots Slots, GearColours Gear) OpenSlots(VirtualFileSystem vfs, TeamCatalog catalog, ModProject? project)
+{
+    var data = project != null && project.TryGet(TeamCatalog.DatabasePath, out var stored) ? project.ReadBlob(stored) : vfs.ReadContent(vfs.Find(TeamCatalog.DatabasePath)!);
+    var file = TdbFile.Parse((byte[])data.Clone());
+    file.ApplyMeta(System.Text.Encoding.UTF8.GetString(vfs.ReadContent(vfs.Find(TeamCatalog.MetaPath)!)));
+    var vault = vfs.Find(UniformSlots.VaultPath) is { } v ? vfs.ReadContent(v) : null;
+    return (UniformSlots.Open(file, catalog, vault), GearColours.Open(file));
+}
+
+static byte[] ReadCurrent(VirtualFileSystem vfs, ModProject project, string path) =>
+    project.TryGet(path, out var stored) ? project.ReadBlob(stored) : vfs.ReadContent(vfs.Find(path) ?? throw new KeyNotFoundException($"No such path: {path}"));
+
+static UniformSlot SlotAt(UniformSlots slots, TeamInfo team, string number)
+{
+    var list = slots.SlotsOf(team);
+    return int.TryParse(number, out var n) && n >= 1 && n <= list.Count ? list[n - 1]
+        : throw new ArgumentException($"{team.Name} has slots 1 to {list.Count}; {number} is not one.");
+}
+
+static int LabelNumber(string text) =>
+    int.TryParse(text, out var n) ? n
+    : UniformSlots.Labels.ToList().FindIndex(l => l.Equals(text, StringComparison.OrdinalIgnoreCase)) is var i and >= 0 ? i
+    : throw new ArgumentException($"Unknown label {text}; use one of: {string.Join(", ", UniformSlots.Labels)}.");
+
+static bool YesNo(string text) => text.ToLowerInvariant() switch
+{
+    "yes" or "true" or "1" => true,
+    "no" or "false" or "0" => false,
+    _ => throw new ArgumentException($"Use yes or no, not {text}."),
+};
 
 static TeamCatalog OpenTeams(VirtualFileSystem vfs) =>
     TeamCatalog.Load(p => vfs.Find(p) is { } f ? vfs.ReadContent(f) : null, vfs.Files.Select(f => f.Path).ToList(), vfs.ReadStock);

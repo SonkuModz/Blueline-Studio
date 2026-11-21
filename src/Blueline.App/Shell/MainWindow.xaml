@@ -8,6 +8,10 @@
         WindowStartupLocation="CenterScreen" Background="{DynamicResource WindowBrush}"
         UseLayoutRounding="True" TextOptions.TextFormattingMode="Display">
   <Grid x:Name="Root" Background="{DynamicResource WindowBrush}">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="Auto" />
+      <ColumnDefinition Width="*" />
+    </Grid.ColumnDefinitions>
     <Grid.RowDefinitions>
       <RowDefinition Height="48" />
       <RowDefinition Height="Auto" />
@@ -16,15 +20,39 @@
       <RowDefinition Height="28" />
     </Grid.RowDefinitions>
 
-    <!-- Top bar: identity, navigation, project -->
-    <Border Grid.Row="0" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1">
-      <DockPanel>
-        <Button DockPanel.Dock="Left" Style="{StaticResource Quiet}" Margin="10,0,10,0" Padding="6,4" VerticalAlignment="Center" Click="OnShowStart" ToolTip="Back to the start screen">
-          <StackPanel Orientation="Horizontal">
-            <Image Source="pack://application:,,,/Assets/blueline_icon.png" Width="26" Height="26" Margin="0,0,9,0" RenderOptions.BitmapScalingMode="HighQuality" />
-            <TextBlock Text="Blueline Studio" FontWeight="SemiBold" FontSize="14" VerticalAlignment="Center" />
-          </StackPanel>
+    <!-- Left rail: the crest, then every tab as an icon over a short caption, grouped by thin lines. Settings sits at the foot. -->
+    <Border Grid.Column="0" Grid.RowSpan="5" Width="76" Background="{DynamicResource RailBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,1,0">
+      <Grid x:Name="TabArea">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="*" />
+          <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <Button Grid.Row="0" Style="{StaticResource Quiet}" Margin="0,8,0,6" Padding="6" HorizontalAlignment="Center" Click="OnShowStart" ToolTip="Blueline Studio: back to the start screen">
+          <Image Source="pack://application:,,,/Assets/blueline_icon.png" Width="30" Height="30" RenderOptions.BitmapScalingMode="HighQuality" />
         </Button>
+        <ScrollViewer x:Name="RailScroll" Grid.Row="1" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+          <StackPanel x:Name="Tabs" Orientation="Vertical" Margin="6,0" />
+        </ScrollViewer>
+        <StackPanel x:Name="RailFoot" Grid.Row="2" Orientation="Vertical" Margin="6,4,6,8" />
+        <!-- The blue bar beside the current tab. It slides to the next one instead of jumping. -->
+        <Rectangle x:Name="Indicator" Grid.RowSpan="3" Width="3" Height="0" RadiusX="1.5" RadiusY="1.5" VerticalAlignment="Top" HorizontalAlignment="Left"
+                   IsHitTestVisible="False" Fill="{DynamicResource AccentTextBrush}">
+          <Rectangle.RenderTransform>
+            <TranslateTransform />
+          </Rectangle.RenderTransform>
+        </Rectangle>
+      </Grid>
+    </Border>
+
+    <!-- Top bar: where you are, then search, project and theme -->
+    <Border Grid.Row="0" Grid.Column="1" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center" Margin="18,0,12,0">
+          <TextBlock x:Name="PageGroup" Style="{StaticResource Dim}" FontSize="12" VerticalAlignment="Center" />
+          <TextBlock x:Name="PageSlash" Style="{StaticResource Dim}" FontSize="12" Margin="8,0" Text="/" VerticalAlignment="Center" />
+          <TextBlock x:Name="PageTitle" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
+        </StackPanel>
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
           <Button x:Name="SearchButton" Style="{StaticResource Quiet}" Click="OnSearch" Margin="0,0,6,0" Padding="9,3" ToolTip="Search  (Ctrl+K)">
             <TextBlock FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="14" Foreground="{DynamicResource DimBrush}" Text="&#xE721;" />
@@ -58,6 +86,7 @@
                 <Button x:Name="MenuPuckPeak" Content="Open Puck Peak Overtime as a project" Style="{StaticResource PopupItem}" Click="OnMenuPuckPeak" />
                 <Button x:Name="MenuMerge" Content="Merge another project into this one" Style="{StaticResource PopupItem}" Click="OnMenuMerge"
                         ToolTip="Adds another Blueline project, a .big or a folder of .big files. You review every file first" />
+                <Button x:Name="MenuPin" Style="{StaticResource PopupItem}" Click="OnMenuPin" />
                 <Button x:Name="MenuFolder" Content="Show project folder" Style="{StaticResource PopupItem}" Click="OnMenuFolder" />
                 <Button x:Name="MenuClose" Content="Close project" Style="{StaticResource PopupItem}" Click="OnMenuClose" />
                 <Rectangle Height="1" Fill="{DynamicResource LineBrush}" Margin="0,4,0,4" />
@@ -69,21 +98,12 @@
           <Button x:Name="UndoButton" Content="Undo" Style="{StaticResource Quiet}" Click="OnUndo" />
           <Button x:Name="RedoButton" Content="Redo" Style="{StaticResource Quiet}" Click="OnRedo" />
         </StackPanel>
-        <Grid x:Name="TabArea">
-          <StackPanel x:Name="Tabs" Orientation="Horizontal" />
-          <!-- The blue line under the current tab. It slides to the next one instead of jumping. -->
-          <Rectangle x:Name="Indicator" Height="2" Width="0" VerticalAlignment="Bottom" HorizontalAlignment="Left" IsHitTestVisible="False"
-                     Fill="{DynamicResource AccentTextBrush}">
-            <Rectangle.RenderTransform>
-              <TranslateTransform />
-            </Rectangle.RenderTransform>
-          </Rectangle>
-        </Grid>
+        <Border />
       </DockPanel>
     </Border>
 
     <!-- Error and notice banner -->
-    <Border x:Name="Banner" Grid.Row="1" Visibility="Collapsed" Background="{DynamicResource BannerBrush}" BorderBrush="{DynamicResource DangerBrush}" BorderThickness="0,0,0,1" Padding="16,8">
+    <Border x:Name="Banner" Grid.Row="1" Grid.Column="1" Visibility="Collapsed" Background="{DynamicResource BannerBrush}" BorderBrush="{DynamicResource DangerBrush}" BorderThickness="0,0,0,1" Padding="16,8">
       <DockPanel>
         <Button DockPanel.Dock="Right" Content="Dismiss" Style="{StaticResource Quiet}" Click="OnDismissBanner" />
         <Button x:Name="BannerLog" DockPanel.Dock="Right" Content="Open log" Style="{StaticResource Quiet}" Click="OnOpenLog" Margin="0,0,4,0" />
@@ -94,14 +114,14 @@
       </DockPanel>
     </Border>
 
-    <controls:PageHost x:Name="Host" Grid.Row="2" ClipToBounds="True" Focusable="False" />
+    <controls:PageHost x:Name="Host" Grid.Row="2" Grid.Column="1" ClipToBounds="True" Focusable="False" />
 
-    <Border x:Name="LogPanel" Grid.Row="3" Height="190" Visibility="Collapsed" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0">
+    <Border x:Name="LogPanel" Grid.Row="3" Grid.Column="1" Height="190" Visibility="Collapsed" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0">
       <ListBox x:Name="LogList" FontFamily="{StaticResource MonoFont}" FontSize="12" />
     </Border>
 
     <!-- Status bar -->
-    <Border Grid.Row="4" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0">
+    <Border Grid.Row="4" Grid.Column="1" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0">
       <DockPanel Margin="12,0">
         <Button DockPanel.Dock="Right" x:Name="LogToggle" Content="Log" Style="{StaticResource Quiet}" Padding="10,1" Click="OnToggleLog" />
         <Button DockPanel.Dock="Right" x:Name="CancelJob" Content="Cancel" Style="{StaticResource Quiet}" Padding="10,1" Visibility="Collapsed" Click="OnCancelJob" />
@@ -111,12 +131,12 @@
     </Border>
 
     <!-- The start screen covers the whole window until you go in -->
-    <shell:StartScreen x:Name="Start" Grid.RowSpan="5" Visibility="Collapsed" />
+    <shell:StartScreen x:Name="Start" Grid.RowSpan="5" Grid.ColumnSpan="2" Visibility="Collapsed" />
 
     <!-- Ctrl+K: jump to a tab, an action or a game file -->
-    <shell:CommandPalette x:Name="Palette" Grid.RowSpan="5" Visibility="Collapsed" />
+    <shell:CommandPalette x:Name="Palette" Grid.RowSpan="5" Grid.ColumnSpan="2" Visibility="Collapsed" />
 
     <!-- Short messages, bottom right, above everything -->
-    <shell:ToastHost x:Name="Toasts" Grid.RowSpan="5" />
+    <shell:ToastHost x:Name="Toasts" Grid.RowSpan="5" Grid.ColumnSpan="2" />
   </Grid>
 </Window>

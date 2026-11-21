@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.12.0
+
+Beta, same test setup as 0.11.0 (NHL 19 CUSA11126 1.60 under shadPS4). A big release: mod packs, a full roster editor, uniform slots and a new look.
+
+### Mod packs and the Mods tab
+- New `.blpack` mod pack format (docs/MOD_PACKS.md): one file that carries a project to someone else's game. It holds only the files the mod changes or adds, never whole game archives, plus optional pack art and an optional custom roster save
+- Build tab, Share card: **Export mod pack**, with name, author, version, description and art
+- New **Mods** tab (Ship group): open or drop in a pack, see what it changes, check the game version and the stock files it expects, see conflicts with other packs, and set load order (top wins)
+- Install builds the pack's `patch_*_99_pk-*` archives on the player's own machine, with every archive read back. A pack's roster goes into a free custom roster slot (never RosterCustom0), after asking, with a backup. Enable, disable and uninstall return the game to stock
+- CLI `pack-export`, `pack-info`, `pack-check`, `pack-install`, `pack-list`, `pack-order`, `pack-slots`, `pack-enable`, `pack-disable`, `pack-uninstall`
+- Tested in a sandbox round trip that booted to the home menu with a pack installed. Not yet played in game with a shared pack
+
+### Roster editor
+- New **Roster** tab (Create group), with every player field from the game database and the roster save (field map in docs/ROSTER_EDITOR.md)
+- Player list filtered by team, free agents, position and search. One player: portrait (replace or drop a picture), name, number, position, team, overall, archetype, then every field in groups (sliders for ratings, lists for choices, colour swatches, heights as 6'2", money as 12.5M) and "Find a field"
+- Several players: ratings up or down, set one field for all, move all to a club
+- Move a player to another club; set every line slot (even strength, power play, penalty kill, overtime, shootout, threes)
+- Edits are saved to the project as one undo step and reach the game through roster save sync
+- Seen in game: an edited name, an edited overall, and a moved player on his new team and line
+- CLI `players`, `player`, `players-set`, `ratings`, `archetype`, `move`, `lines`, `jersey`, `roster-league-sync`
+- Not yet: adding new players, dragging between line slots
+
+### Uniform slots
+- Teams tab, More, **Uniform slots**: a team's kits as tiles in jersey menu order. Rename, reorder, set default and light, replace the jersey sheet, remove a kit
+- **Add a slot**: gives a team an extra kit using a kit name the game already knows and no team uses (about 360 free), with its own menu name and gear colours (docs/UNIFORM_SLOTS.md)
+- Seen in game: a new Toronto kit listed in jersey select and worn, with its own glove and helmet colours and menu name
+- CLI `slots`, `slot-add`, `slot-set`, `slot-remove`
+
+### Franchise mode
+- Research in docs/FRANCHISE.md
+- CLI `franchise-info`, `franchise-repack`, `franchise-sync` (team names, AHL affiliates, arenas into a Franchise save) and `franchise-immersion` (2025-26 arenas and real insiders for a project). New franchises pick up 2025-26 affiliates and arenas from the roster save. A repacked existing Franchise save has not been loaded in game
+
+### DLSS
+- Play tab: a **DLSS (DLAA)** switch when the emulator is the DLSS build (docs/UPSCALING.md). That build is separate and not included. At 1080p it runs as DLAA, NVIDIA's anti-aliasing, for about 1.5 ms a frame
+
+### Interface
+- Slim left rail instead of the top tab bar, and an Ice colour palette
+- Pinned projects on the start screen, plus start screen fixes
+- Buttons are greyed out when they can't be used; the Teams tab's extra panels are in a More menu
+
+### Other
+- CLI `texture-import <project> <game> <path> <png>`: a PNG over any game texture, encoded in that texture's own format and size (used for menu backgrounds)
+
 ## 0.11.0
 
 Beta, same test setup as 0.10.0 (NHL 19 CUSA11126 1.60 under shadPS4).

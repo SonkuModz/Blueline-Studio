@@ -1,4 +1,4 @@
-<UserControl x:Class="Blueline.App.Modules.TeamsModule"
+﻿<UserControl x:Class="Blueline.App.Modules.TeamsModule"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:Blueline.App.Modules"
@@ -58,23 +58,49 @@
             </DockPanel>
             <TextBlock x:Name="TeamFacts" Style="{StaticResource Dim}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" />
             <TextBlock x:Name="TeamCounts" Style="{StaticResource Dim}" Margin="0,2,0,8" TextTrimming="CharacterEllipsis" />
+            <!-- One main action, the two panels people open most, and the rest under More -->
             <WrapPanel>
               <Button x:Name="LogoSetButton" Style="{StaticResource Primary}" Content="Replace logo set" Margin="0,0,6,4" Click="OnReplaceLogoSet"
                       ToolTip="One picture into all of this team's square logos, as one undo step" />
-              <Button x:Name="ExportShownButton" Content="Export shown" Margin="0,0,6,4" Click="OnExportShown"
-                      ToolTip="Saves what is shown as PNG files under their game folders, ready to edit" />
-              <Button x:Name="ImportPackButton" Content="Import folder" Margin="0,0,6,4" Click="OnImportFolder"
-                      ToolTip="Imports a folder of images, matching them by game path or by a file name only one texture has" />
-              <Button x:Name="RevertTeamButton" Content="Revert team" Margin="0,0,6,4" Click="OnRevertTeam"
-                      ToolTip="Puts back every texture of this team that this project changed" />
-              <ToggleButton x:Name="DetailsButton" Style="{StaticResource Chip}" Content="Team details" Margin="0,0,6,4" Click="OnTeamDetails"
-                            ToolTip="Names, score clock and other colours, arena, songs, goalie masks and everything else the game database holds for this team" />
               <ToggleButton x:Name="GearButton" Style="{StaticResource Chip}" Content="Uniform studio" Margin="0,0,6,4" Click="OnGearColours"
                             ToolTip="The team's kits on the game's meshes, with each kit's glove and helmet colours beside them" />
-              <ToggleButton x:Name="FullIceButton" Style="{StaticResource Chip}" Content="Full ice" Margin="0,0,6,4" Click="OnFullIce"
-                            ToolTip="The team's whole rink for the full-ice model: from TheFaceoff.net, any picture, or a plain rink with the team's logo" />
-              <ToggleButton x:Name="TruColorButton" Style="{StaticResource Chip}" Content="League colours" Margin="0,0,6,4" Click="OnTruColor"
-                            ToolTip="A whole league's team colours from TruColor (trucolor.net), previewed next to the current ones before anything is written" />
+              <ToggleButton x:Name="DetailsButton" Style="{StaticResource Chip}" Content="Team details" Margin="0,0,6,4" Click="OnTeamDetails"
+                            ToolTip="Names, score clock and other colours, arena, songs, goalie masks and everything else the game database holds for this team" />
+              <ToggleButton x:Name="MoreButton" Style="{StaticResource Chip}" Margin="0,0,6,4" ToolTip="Export, import, revert, full ice and league colours"
+                            IsChecked="{Binding IsOpen, ElementName=MoreMenu, Mode=TwoWay}">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="More" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}" />
+                  <TextBlock FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="9" Margin="7,1,0,0" VerticalAlignment="Center" Text="&#xE70D;"
+                             Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}" />
+                </StackPanel>
+              </ToggleButton>
+              <Popup x:Name="MoreMenu" PlacementTarget="{Binding ElementName=MoreButton}" Placement="Bottom" VerticalOffset="4" StaysOpen="False"
+                     AllowsTransparency="True" PopupAnimation="Fade">
+                <Border Width="250" Margin="0,0,16,16" Padding="6" CornerRadius="10" BorderThickness="1"
+                        Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}">
+                  <Border.Effect>
+                    <DropShadowEffect BlurRadius="16" ShadowDepth="4" Opacity="0.35" />
+                  </Border.Effect>
+                  <StackPanel ButtonBase.Click="OnMoreItem">
+                    <TextBlock Style="{StaticResource Section}" Margin="10,6,10,4" Text="PANELS" />
+                    <ToggleButton x:Name="FullIceButton" Style="{StaticResource PopupToggle}" Content="Full ice" Click="OnFullIce"
+                                  ToolTip="The team's whole rink for the full-ice model: from TheFaceoff.net, any picture, or a plain rink with the team's logo" />
+                    <ToggleButton x:Name="SlotsButton" Style="{StaticResource PopupToggle}" Content="Uniform slots" Click="OnSlots"
+                                  ToolTip="The kits the team's jersey menu lists: reorder, relabel, remove, or add a slot on a free kit name with your art" />
+                    <ToggleButton x:Name="TruColorButton" Style="{StaticResource PopupToggle}" Content="League colours" Click="OnTruColor"
+                                  ToolTip="A whole league's team colours from TruColor (trucolor.net), previewed next to the current ones before anything is written" />
+                    <Rectangle Height="1" Fill="{DynamicResource LineBrush}" Margin="0,4" />
+                    <TextBlock Style="{StaticResource Section}" Margin="10,6,10,4" Text="FILES" />
+                    <Button x:Name="ExportShownButton" Style="{StaticResource PopupItem}" Content="Export shown" Click="OnExportShown"
+                            ToolTip="Saves what is shown as PNG files under their game folders, ready to edit" />
+                    <Button x:Name="ImportPackButton" Style="{StaticResource PopupItem}" Content="Import folder" Click="OnImportFolder"
+                            ToolTip="Imports a folder of images, matching them by game path or by a file name only one texture has" />
+                    <Rectangle Height="1" Fill="{DynamicResource LineBrush}" Margin="0,4" />
+                    <Button x:Name="RevertTeamButton" Style="{StaticResource PopupItem}" Content="Revert team" Click="OnRevertTeam"
+                            ToolTip="Puts back every texture of this team that this project changed" />
+                  </StackPanel>
+                </Border>
+              </Popup>
             </WrapPanel>
           </StackPanel>
         </Grid>
@@ -194,6 +220,7 @@
 
     <!-- Full ice: the team's whole rink for the full-ice rink model -->
     <ContentControl x:Name="FullIceHost" Grid.ColumnSpan="3" Visibility="Collapsed" />
+    <ContentControl x:Name="SlotsHost" Grid.ColumnSpan="3" Visibility="Collapsed" />
 
     <!-- League colours: a league's team colours from TruColor -->
     <ContentControl x:Name="TruColorHost" Grid.ColumnSpan="3" Visibility="Collapsed" />

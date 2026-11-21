@@ -59,10 +59,10 @@ public sealed class GearColourTests
         Assert.AreEqual(900, gear.Resolve(25, kits["Away"], GearPart.Gloves).Row!.Index);
         Assert.AreEqual(907, gear.Resolve(25, kits["Home"], GearPart.Helmet).Row!.Index);
         Assert.AreEqual(908, gear.Resolve(25, kits["Away"], GearPart.Helmet).Row!.Index);
-        Assert.AreEqual(901, gear.Resolve(25, kits["Alternate (variant 3)"], GearPart.Gloves).Row!.Index);
-        Assert.AreEqual(909, gear.Resolve(25, kits["Alternate (variant 3)"], GearPart.Helmet).Row!.Index);
+        Assert.AreEqual(901, gear.Resolve(25, kits["Alternate (variant 2)"], GearPart.Gloves).Row!.Index);
+        Assert.AreEqual(909, gear.Resolve(25, kits["Alternate (variant 2)"], GearPart.Helmet).Row!.Index);
 
-        CollectionAssert.AreEquivalent(new[] { "Home", "Away", "Alternate (variant 4)" }, gear.KitsUsing(blues, homeGloves.Row).Select(k => k.Label).ToArray());
+        CollectionAssert.AreEquivalent(new[] { "Home", "Away" }, gear.KitsUsing(blues, homeGloves.Row).Select(k => k.Label).ToArray());
     }
 
     [TestMethod]
@@ -82,16 +82,20 @@ public sealed class GearColourTests
     }
 
     [TestMethod]
-    public void TorontoHomeGlovesGetANewRowAndLeaveVariant6Alone()
+    public void TorontoRow995BelongsToTheFiveKitAndHomeGetsANewRow()
     {
-        // Row 995 (variant 6) has no jersey row, but a kit with only gear rows can still be worn (Buffalo's Goathead wore
-        // variant 3 in game), so it counts as a kit and is not taken.
+        // Gear variant = jersey variant + 1 (seen in game 2026-11-20): row 995, gear variant 6, is the adidas "five" kit's own.
         var gear = OpenGear();
         var leafs = Team("Toronto Maple Leafs");
-        var home = gear.KitsOf(leafs).Single(k => k.Label == "Home");
-        Assert.IsTrue(gear.KitsOf(leafs).Any(k => k.FromGearRowsOnly && k.Variant == 6));
+        var five = gear.KitsOf(leafs).Single(k => k.Variant == 5);
+        Assert.IsFalse(five.FromGearRowsOnly);
+        Assert.AreEqual(6, five.GearVariant);
+        var fiveGloves = gear.Resolve(28, five, GearPart.Gloves);
+        Assert.AreEqual(GearLink.Own, fiveGloves.Link);
+        Assert.AreEqual(995, fiveGloves.Row!.Index);
         Assert.IsNull(gear.UnusedRow(leafs, GearPart.Gloves));
 
+        var home = gear.KitsOf(leafs).Single(k => k.Label == "Home");
         var (row, added) = gear.GiveOwnRow(leafs, home, GearPart.Gloves);
         Assert.IsTrue(added);
         Assert.AreEqual(1, row.Variant);
@@ -106,18 +110,14 @@ public sealed class GearColourTests
         var gear = OpenGear();
         var sabres = Team("Buffalo Sabres");
         var two = new UniformKit("adidas", "buffalo", "two", "jersey_adidas_buffalo_two_cm", null, null);
-        Assert.AreEqual(3, gear.KitFor(sabres, two)!.GearVariant, "Seen in game: the Goathead wore gear variant 3.");
+        var goathead = gear.KitFor(sabres, two)!;
+        Assert.AreEqual(3, goathead.GearVariant, "Seen in game: the Goathead wore gear variant 3.");
+        Assert.IsTrue(goathead.JerseyIndex >= 0, "the Goathead has a jersey row");
 
-        // What the old "Own row" did: row 142 (variant 3) re-pointed to Home.
-        var row142 = gear.RowsOf(4).Single(r => r.Index == 142);
-        gear.File.Tables.Single(t => t.Label == GearColours.TableName).Write(row142.Row,
-            gear.File.Tables.Single(t => t.Label == GearColours.TableName).Fields.Single(f => f.Label == "variant"), 1);
-        Assert.IsFalse(gear.KitsOf(sabres).Any(k => k.Variant >= 3), "Without its sheets, nothing says the team has a third kit.");
-
-        gear.UseSheets(sabres, [two]);
-        var goathead = gear.KitsOf(sabres).Single(k => k.FromGearRowsOnly);
-        Assert.AreEqual(3, goathead.GearVariant);
-        Assert.AreEqual(goathead, gear.KitFor(sabres, two));
+        // What the old "Own row" did: row 142 (variant 3) re-pointed to Home. The kit is still listed from its jersey row.
+        var table = gear.File.Tables.Single(t => t.Label == GearColours.TableName);
+        table.Write(gear.RowsOf(4).Single(r => r.Index == 142).Row, table.Fields.Single(f => f.Label == "variant"), 1);
+        Assert.AreEqual(goathead, gear.KitsOf(sabres).Single(k => k.Variant == 2));
         var (row, added) = gear.GiveOwnRow(sabres, goathead, GearPart.Helmet);
         Assert.IsTrue(added);
         Assert.AreEqual(3, row.Variant);

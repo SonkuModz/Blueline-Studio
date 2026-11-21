@@ -2,36 +2,38 @@
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
   <!-- Palette. These start as the dark theme. ThemeManager changes each brush's colour in place, so every reference follows. -->
-  <SolidColorBrush x:Key="WindowBrush" Color="#090D16" />
-  <SolidColorBrush x:Key="PanelBrush" Color="#0F1523" />
-  <SolidColorBrush x:Key="RaisedBrush" Color="#151D2E" />
-  <SolidColorBrush x:Key="HoverBrush" Color="#1E293B" />
-  <SolidColorBrush x:Key="LineBrush" Color="#243146" />
-  <SolidColorBrush x:Key="TextBrush" Color="#E2E8F0" />
-  <SolidColorBrush x:Key="DimBrush" Color="#94A3B8" />
-  <SolidColorBrush x:Key="AccentBrush" Color="#0284C7" />
-  <SolidColorBrush x:Key="AccentHoverBrush" Color="#0EA5E9" />
-  <SolidColorBrush x:Key="AccentPressBrush" Color="#0369A1" />
-  <SolidColorBrush x:Key="AccentTextBrush" Color="#38BDF8" />
-  <SolidColorBrush x:Key="AccentSoftBrush" Color="#1F38BDF8" />
-  <SolidColorBrush x:Key="SelectBrush" Color="#3338BDF8" />
+  <SolidColorBrush x:Key="WindowBrush" Color="#060A12" />
+  <SolidColorBrush x:Key="PanelBrush" Color="#0C1422" />
+  <SolidColorBrush x:Key="RaisedBrush" Color="#121C2E" />
+  <SolidColorBrush x:Key="HoverBrush" Color="#1A2740" />
+  <SolidColorBrush x:Key="RailBrush" Color="#08101C" />
+  <SolidColorBrush x:Key="DisabledBrush" Color="#53657D" />
+  <SolidColorBrush x:Key="LineBrush" Color="#1E2C44" />
+  <SolidColorBrush x:Key="TextBrush" Color="#E6F1FA" />
+  <SolidColorBrush x:Key="DimBrush" Color="#8FA5BE" />
+  <SolidColorBrush x:Key="AccentBrush" Color="#0277B6" />
+  <SolidColorBrush x:Key="AccentHoverBrush" Color="#0A8FD4" />
+  <SolidColorBrush x:Key="AccentPressBrush" Color="#035F92" />
+  <SolidColorBrush x:Key="AccentTextBrush" Color="#5CCBF5" />
+  <SolidColorBrush x:Key="AccentSoftBrush" Color="#245CCBF5" />
+  <SolidColorBrush x:Key="SelectBrush" Color="#385CCBF5" />
   <SolidColorBrush x:Key="DangerBrush" Color="#F0655C" />
   <SolidColorBrush x:Key="SuccessBrush" Color="#46BE8A" />
   <SolidColorBrush x:Key="WarningBrush" Color="#E8B04A" />
-  <SolidColorBrush x:Key="ScrollThumbBrush" Color="#334155" />
-  <SolidColorBrush x:Key="ScrollThumbHoverBrush" Color="#475569" />
+  <SolidColorBrush x:Key="ScrollThumbBrush" Color="#2A3A54" />
+  <SolidColorBrush x:Key="ScrollThumbHoverBrush" Color="#3D5170" />
   <SolidColorBrush x:Key="ZebraBrush" Color="#0AFFFFFF" />
   <SolidColorBrush x:Key="BannerBrush" Color="#2A1A1D" />
 
   <!-- System brushes that built-in templates fall back to, such as the corner between two scrollbars. -->
-  <SolidColorBrush x:Key="{x:Static SystemColors.ControlBrushKey}" Color="#0F1523" />
-  <SolidColorBrush x:Key="{x:Static SystemColors.WindowBrushKey}" Color="#0F1523" />
-  <SolidColorBrush x:Key="{x:Static SystemColors.ControlLightBrushKey}" Color="#0F1523" />
-  <SolidColorBrush x:Key="{x:Static SystemColors.ControlLightLightBrushKey}" Color="#0F1523" />
-  <SolidColorBrush x:Key="{x:Static SystemColors.ControlDarkBrushKey}" Color="#0F1523" />
-  <SolidColorBrush x:Key="{x:Static SystemColors.ControlDarkDarkBrushKey}" Color="#0F1523" />
-  <SolidColorBrush x:Key="{x:Static SystemColors.ControlTextBrushKey}" Color="#E2E8F0" />
-  <SolidColorBrush x:Key="{x:Static SystemColors.WindowTextBrushKey}" Color="#E2E8F0" />
+  <SolidColorBrush x:Key="{x:Static SystemColors.ControlBrushKey}" Color="#0C1422" />
+  <SolidColorBrush x:Key="{x:Static SystemColors.WindowBrushKey}" Color="#0C1422" />
+  <SolidColorBrush x:Key="{x:Static SystemColors.ControlLightBrushKey}" Color="#0C1422" />
+  <SolidColorBrush x:Key="{x:Static SystemColors.ControlLightLightBrushKey}" Color="#0C1422" />
+  <SolidColorBrush x:Key="{x:Static SystemColors.ControlDarkBrushKey}" Color="#0C1422" />
+  <SolidColorBrush x:Key="{x:Static SystemColors.ControlDarkDarkBrushKey}" Color="#0C1422" />
+  <SolidColorBrush x:Key="{x:Static SystemColors.ControlTextBrushKey}" Color="#E6F1FA" />
+  <SolidColorBrush x:Key="{x:Static SystemColors.WindowTextBrushKey}" Color="#E6F1FA" />
 
   <FontFamily x:Key="UiFont">Segoe UI Variable Text, Segoe UI</FontFamily>
   <FontFamily x:Key="MonoFont">Cascadia Mono, Consolas</FontFamily>
@@ -61,11 +63,16 @@
     <Setter Property="Background" Value="{DynamicResource PanelBrush}" />
     <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
     <Setter Property="BorderThickness" Value="1" />
-    <Setter Property="CornerRadius" Value="6" />
+    <Setter Property="CornerRadius" Value="10" />
     <Setter Property="Padding" Value="12" />
   </Style>
 
   <!-- Buttons -->
+  <!-- Words inside a button take the button's colour, so disabled and primary buttons colour their captions too. Each button
+       template carries it, because the app-wide TextBlock style would otherwise paint every caption in the normal text colour. -->
+  <Style x:Key="ButtonCaption" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+    <Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ButtonBase}}" />
+  </Style>
   <Style TargetType="Button">
     <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
     <Setter Property="Background" Value="{DynamicResource RaisedBrush}" />
@@ -79,10 +86,13 @@
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="Button">
-          <Border x:Name="Box" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
-                  BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4" Padding="{TemplateBinding Padding}">
-            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-          </Border>
+          <Grid>
+            <Border x:Name="Box" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" ><ContentPresenter.Resources><Style TargetType="TextBlock" BasedOn="{StaticResource ButtonCaption}" /></ContentPresenter.Resources></ContentPresenter>
+            </Border>
+            <Rectangle x:Name="Dash" RadiusX="6" RadiusY="6" StrokeThickness="1" StrokeDashArray="3 2" Stroke="{DynamicResource LineBrush}" Visibility="Collapsed" IsHitTestVisible="False" />
+          </Grid>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
               <Setter TargetName="Box" Property="Background" Value="{DynamicResource HoverBrush}" />
@@ -90,8 +100,12 @@
             <Trigger Property="IsKeyboardFocused" Value="True">
               <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
             </Trigger>
+            <!-- Disabled: no fill, a dashed edge and grey words, so it never passes for a button you can press -->
             <Trigger Property="IsEnabled" Value="False">
-              <Setter TargetName="Box" Property="Opacity" Value="0.4" />
+              <Setter TargetName="Box" Property="Background" Value="Transparent" />
+              <Setter TargetName="Box" Property="BorderBrush" Value="Transparent" />
+              <Setter TargetName="Dash" Property="Visibility" Value="Visible" />
+              <Setter Property="Foreground" Value="{DynamicResource DisabledBrush}" />
               <Setter Property="Cursor" Value="Arrow" />
             </Trigger>
           </ControlTemplate.Triggers>
@@ -107,9 +121,12 @@
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="Button">
-          <Border x:Name="Box" Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
-            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-          </Border>
+          <Grid>
+            <Border x:Name="Box" Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" ><ContentPresenter.Resources><Style TargetType="TextBlock" BasedOn="{StaticResource ButtonCaption}" /></ContentPresenter.Resources></ContentPresenter>
+            </Border>
+            <Rectangle x:Name="Dash" RadiusX="6" RadiusY="6" StrokeThickness="1" StrokeDashArray="3 2" Stroke="{DynamicResource LineBrush}" Visibility="Collapsed" IsHitTestVisible="False" />
+          </Grid>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
               <Setter TargetName="Box" Property="Background" Value="{DynamicResource AccentHoverBrush}" />
@@ -118,7 +135,10 @@
               <Setter TargetName="Box" Property="Background" Value="{DynamicResource AccentPressBrush}" />
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
-              <Setter TargetName="Box" Property="Opacity" Value="0.4" />
+              <Setter TargetName="Box" Property="Background" Value="Transparent" />
+              <Setter TargetName="Dash" Property="Visibility" Value="Visible" />
+              <Setter Property="Foreground" Value="{DynamicResource DisabledBrush}" />
+              <Setter Property="Cursor" Value="Arrow" />
             </Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
@@ -128,28 +148,55 @@
   <Style x:Key="Quiet" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
     <Setter Property="Background" Value="Transparent" />
     <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Border x:Name="Box" Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center" ><ContentPresenter.Resources><Style TargetType="TextBlock" BasedOn="{StaticResource ButtonCaption}" /></ContentPresenter.Resources></ContentPresenter>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Box" Property="Background" Value="{DynamicResource HoverBrush}" />
+            </Trigger>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+              <Setter TargetName="Box" Property="Background" Value="{DynamicResource HoverBrush}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Foreground" Value="{DynamicResource DisabledBrush}" />
+              <Setter Property="Cursor" Value="Arrow" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
   </Style>
 
   <!-- Top navigation -->
   <Style x:Key="NavTab" TargetType="RadioButton">
     <Setter Property="Foreground" Value="{DynamicResource DimBrush}" />
     <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
-    <Setter Property="FontSize" Value="13" />
+    <Setter Property="FontSize" Value="11" />
     <Setter Property="Cursor" Value="Hand" />
     <Setter Property="GroupName" Value="Nav" />
     <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+    <Setter Property="Margin" Value="0,1" />
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="RadioButton">
-          <Grid Background="Transparent">
-            <ContentPresenter Margin="14,0" HorizontalAlignment="Center" VerticalAlignment="Center" />
-          </Grid>
+          <Border x:Name="Box" Background="Transparent" CornerRadius="8" Padding="2,6,2,5">
+            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Box" Property="Background" Value="{DynamicResource HoverBrush}" />
               <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
             </Trigger>
             <Trigger Property="IsChecked" Value="True">
+              <Setter TargetName="Box" Property="Background" Value="{DynamicResource AccentSoftBrush}" />
               <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+            </Trigger>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+              <Setter TargetName="Box" Property="Background" Value="{DynamicResource HoverBrush}" />
             </Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
@@ -647,7 +694,7 @@
       <Setter.Value>
         <ControlTemplate TargetType="Button">
           <Border x:Name="Bd" CornerRadius="6" Padding="10,7" Background="Transparent">
-            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center" />
+            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center" ><ContentPresenter.Resources><Style TargetType="TextBlock" BasedOn="{StaticResource ButtonCaption}" /></ContentPresenter.Resources></ContentPresenter>
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
@@ -656,6 +703,68 @@
             <Trigger Property="IsEnabled" Value="False">
               <Setter Property="Foreground" Value="{DynamicResource DimBrush}" />
               <Setter Property="Opacity" Value="0.55" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+  <!-- A menu item that stays lit while its panel is open, such as Full ice in the Teams "More" menu -->
+  <Style x:Key="PopupToggle" TargetType="ToggleButton">
+    <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+    <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+    <Setter Property="FontSize" Value="13" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="HorizontalContentAlignment" Value="Left" />
+    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ToggleButton">
+          <Border x:Name="Bd" CornerRadius="6" Padding="10,7" Background="Transparent">
+            <DockPanel>
+              <TextBlock x:Name="Tick" DockPanel.Dock="Right" Margin="12,0,0,0" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11"
+                         VerticalAlignment="Center" Text="&#xE73E;" Foreground="{DynamicResource AccentTextBrush}" Visibility="Hidden" />
+              <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center" />
+            </DockPanel>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="{DynamicResource HoverBrush}" />
+            </Trigger>
+            <Trigger Property="IsChecked" Value="True">
+              <Setter TargetName="Tick" Property="Visibility" Value="Visible" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Foreground" Value="{DynamicResource DisabledBrush}" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- Pill tabs: a row of choices where one is on, such as the art categories in Teams -->
+  <Style x:Key="Pill" TargetType="ToggleButton">
+    <Setter Property="Foreground" Value="{DynamicResource DimBrush}" />
+    <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ToggleButton">
+          <Border x:Name="Box" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="99" Padding="11,4">
+            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Box" Property="Background" Value="{DynamicResource HoverBrush}" />
+              <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+            </Trigger>
+            <Trigger Property="IsChecked" Value="True">
+              <Setter TargetName="Box" Property="Background" Value="{DynamicResource SelectBrush}" />
+              <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+              <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
             </Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>

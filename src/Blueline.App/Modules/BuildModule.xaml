@@ -120,6 +120,14 @@
 
         <Border Style="{StaticResource Card}" Margin="0,0,0,8">
           <StackPanel>
+            <TextBlock Style="{StaticResource Section}" Text="SHARE" />
+            <TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,0,0,8" Text="Makes a .blpack others can install from their Mods page: only the files this project changes, with art for the pack and, if you like, a roster save." />
+            <Button x:Name="ExportPackButton" Content="Export mod pack" HorizontalAlignment="Left" Click="OnExportPack" />
+          </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource Card}" Margin="0,0,0,8">
+          <StackPanel>
             <TextBlock Style="{StaticResource Section}" Text="ROSTER SAVE" />
             <TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,0,0,8" Text="With a custom roster active (like the Overtime roster), the game reads teams, arenas and gear from that roster save instead of the database. This copies only the database cells this project changed into RosterCustom0, plus any glove and helmet rows it added; the roster's own changes stay. A copy of the save is kept first." />
             <StackPanel Orientation="Horizontal">

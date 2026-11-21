@@ -96,6 +96,7 @@ public partial class BuildModule : UserControl, IEditorModule
             : installed ? "Installed: " + string.Join(", ", project.Installed.Select(i => i.FileName))
             : _build == null ? "Build first to install." : "Ready to install.";
         RevertSelected.IsEnabled = Changes.SelectedItems.Count > 0;
+        ExportPackButton.IsEnabled = project != null && vfs != null && project.ChangeCount > 0 && !_services.Jobs.IsBusy;
         var hasDatabase = project != null && project.TryGet(Core.Teams.TeamCatalog.DatabasePath, out _);
         RosterSyncButton.IsEnabled = hasDatabase && vfs != null && !_services.Jobs.IsBusy;
         if (!hasDatabase)
@@ -131,6 +132,21 @@ public partial class BuildModule : UserControl, IEditorModule
     }
 
     private void OnBuild(object sender, RoutedEventArgs e) => _ = BuildAsync();
+
+    private UIElement? _buildView;
+
+    /// <summary>Shows the Export mod pack page in place of the Build page, with a way back.</summary>
+    public void OnExportPack(object? sender, RoutedEventArgs? e)
+    {
+        if (_services.Workspace.Project is not { } project || _services.Workspace.Vfs == null)
+            return;
+        _buildView ??= (UIElement)Content;
+        Content = new PackExportPage(_services, project, () =>
+        {
+            Content = _buildView;
+            Refresh();
+        });
+    }
 
     public async Task BuildAsync()
     {

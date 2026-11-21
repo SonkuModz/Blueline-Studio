@@ -14,17 +14,16 @@ public sealed record GearRow(int Row, int Index, int Team, GearPart Part, int Er
 }
 
 /// <summary>
-/// One of a team's current (adidas) kits: a jersey from the jersey table, or (JerseyIndex -1) a gear variant from 3 up that
-/// has rows of its own but no jersey row. Seen in game 2026-11-15: Buffalo has no adidas alternate in its jersey list, yet
-/// its Goathead alternate (the "two" sheets, added by Puck Peak) wore the gear variant 3 gloves.
+/// One of a team's current (adidas, jersey style 2) kits: a jersey row, or (JerseyIndex -1) a kit known only from its gear rows
+/// or its sheets. Read 2026-11-20 (docs/UNIFORM_SLOTS.md): the gear variant is the adidas jersey variant plus one for every
+/// NHL club, which also fits what was seen in game (St. Louis gear 3 on its "two" kit, Buffalo's "two" on gear 3).
 /// </summary>
 public sealed record GearKit(int JerseyIndex, int Variant)
 {
     public bool FromGearRowsOnly => JerseyIndex < 0;
 
-    /// <summary>The gear table's variant for this kit. Jersey 0 is Home and 1 is Away, but gear 1 is Home and 2 is Away;
-    /// from 3 on they match. Jersey variant 2 has no gear number, since gear 2 is Away.</summary>
-    public int? GearVariant => Variant switch { 0 => 1, 1 => 2, >= 3 => Variant, _ => null };
+    /// <summary>The gear table's variant for this kit: the jersey variant plus one (gear 0 is the fallback).</summary>
+    public int? GearVariant => Variant + 1;
 
     public string Label => Variant switch { 0 => "Home", 1 => "Away", _ => $"Alternate (variant {Variant})" };
 
@@ -38,8 +37,9 @@ public sealed record GearResolution(GearKit Kit, GearPart Part, GearRow? Row, Ge
 
 /// <summary>
 /// Glove and helmet colours per kit, edited in the stock team gear table of the game database. Seen in game (docs/RESEARCH.md
-/// section 6.10): gloves are equipment 5 and the helmet is 8; the gear team is the team's index plus one for NHL clubs; era 3
-/// is the current adidas jersey style 0; a kit with no row of its own reads the variant 0 row of its era. A roster save the
+/// section 6.10, docs/UNIFORM_SLOTS.md): gloves are equipment 5 and the helmet is 8; the gear team is the team's index plus one
+/// for NHL clubs; era 3 is the current adidas jersey style 2, and a kit's gear variant is its jersey variant plus one; a kit with
+/// no row of its own reads the variant 0 row of its era. A roster save the
 /// player has loaded holds its own copy and wins over this table.
 /// </summary>
 public sealed class GearColours
@@ -47,8 +47,11 @@ public sealed class GearColours
     public const string TableName = "stockteamequipmenttable";
     public const string JerseyTableName = "stockteamjerseys";
 
-    /// <summary>The gear era of the current adidas kits (jersey style 0). How older eras map to older styles is not known.</summary>
+    /// <summary>The gear era of the current adidas kits (jersey style 2). How older eras map to older styles is not known.</summary>
     public const int CurrentEra = 3;
+
+    /// <summary>The jersey table's style for adidas, the current kits (0 is nineties, 1 rbk).</summary>
+    public const int AdidasStyle = 2;
 
     public const int ZoneCount = 15;
 
@@ -101,49 +104,23 @@ public sealed class GearColours
     {
         var kits = new List<GearKit>();
         for (var r = 0; r < _jerseys.Count; r++)
-            if (Number(_jerseys, r, _jerseyTeam) == team.Index && Number(_jerseys, r, _jerseyStyle) == 0)
+            if (Number(_jerseys, r, _jerseyTeam) == team.Index && Number(_jerseys, r, _jerseyStyle) == AdidasStyle)
                 kits.Add(new GearKit(Number(_jerseys, r, _jerseyIndex), Number(_jerseys, r, _jerseyVariant)));
-        // Gear variants from 3 up with rows of their own are kits the game can wear even without a jersey row.
+        // Gear rows for a kit with no jersey row (a slot that was removed, or one a mod wears another way) are still kits.
         if (GearTeamOf(team) is { } gearTeam)
-            foreach (var variant in RowsOf(gearTeam).Where(r => r.IsCurrentEra && r.Variant >= 3).Select(r => r.Variant).Distinct().Order())
-                if (kits.All(k => k.GearVariant != variant))
+            foreach (var variant in RowsOf(gearTeam).Where(r => r.IsCurrentEra && r.Variant >= 1).Select(r => r.Variant - 1).Distinct().Order())
+                if (kits.All(k => k.Variant != variant))
                     kits.Add(new GearKit(-1, variant));
-
-        // Adidas alternate sheets with no jersey row are matched in order to the kits that only have gear rows ("two" to
-        // the first). Where there are not enough of those, new gear numbers follow the highest one in use.
-        var sheets = _sheets.GetValueOrDefault(team.Index, []).Append(alsoSheet).OfType<UniformKit>();
-        var needed = sheets.Where(s => s.Brand == "adidas").Select(s => Array.IndexOf(SheetNumbers, s.Kit))
-            .Where(n => n >= 2 && kits.All(k => k.JerseyIndex != n)).DefaultIfEmpty(1).Max() - 1;
-        while (kits.Count(k => k.FromGearRowsOnly) < needed)
-            kits.Add(new GearKit(-1, Math.Max(3, kits.Select(k => k.GearVariant ?? k.Variant).DefaultIfEmpty(2).Max() + 1)));
-        return [.. kits.OrderBy(k => k.Variant)];
+        // Adidas sheets with neither are kits too: their word is their variant ("two" is 2).
+        foreach (var sheet in _sheets.GetValueOrDefault(team.Index, []).Append(alsoSheet).OfType<UniformKit>())
+            if (sheet.Brand == "adidas" && UniformSlots.VariantOf(sheet.Kit) is { } variant && kits.All(k => k.Variant != variant))
+                kits.Add(new GearKit(-1, variant));
+        return [.. kits.GroupBy(k => k.Variant).Select(g => g.First()).OrderBy(k => k.Variant)];
     }
 
-    /// <summary>
-    /// The jersey-table kit a set of uniform sheets is. Adidas home and away are variants 0 and 1. An alternate's word
-    /// ("two", "three", ...) is taken as its jersey index, which is a guess from naming (Toronto has sheets home to five and
-    /// jersey indexes 0 to 5). When no jersey has that index, the alternates are matched in order to the kits that only
-    /// have gear rows ("two" to the first): Buffalo's "two" wore gear variant 3 in game. Older brands have no known gear
-    /// era, so they give null.
-    /// </summary>
-    public GearKit? KitFor(TeamInfo team, UniformKit kit)
-    {
-        if (kit.Brand != "adidas")
-            return null;
-        var kits = KitsOf(team, kit);
-        var number = Array.IndexOf(SheetNumbers, kit.Kit);
-        return kit.Kit switch
-        {
-            "home" => kits.FirstOrDefault(k => k.Variant == 0),
-            "away" => kits.FirstOrDefault(k => k.Variant == 1),
-            _ => number >= 2 ? kits.FirstOrDefault(k => k.JerseyIndex == number) ?? kits.Where(k => k.FromGearRowsOnly).ElementAtOrDefault(number - 2) : null,
-        };
-    }
-
-    private static readonly string[] SheetNumbers = ["home", "away", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
-
-    /// <summary>True when the link from a sheet set to its kit is a guess (anything but home and away).</summary>
-    public static bool IsGuessedLink(UniformKit kit) => kit.Kit is not ("home" or "away");
+    /// <summary>The kit a set of adidas uniform sheets is: the one whose variant is the sheets' word. Older brands give null.</summary>
+    public GearKit? KitFor(TeamInfo team, UniformKit kit) =>
+        kit.Brand == "adidas" && UniformSlots.VariantOf(kit.Kit) is { } variant ? KitsOf(team, kit).FirstOrDefault(k => k.Variant == variant) : null;
 
     public IReadOnlyList<GearRow> RowsOf(int gearTeam)
     {

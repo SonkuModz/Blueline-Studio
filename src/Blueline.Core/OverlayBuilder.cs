@@ -17,10 +17,11 @@ public sealed class BuildFailedException(string message) : Exception(message);
 /// </summary>
 public static class OverlayBuilder
 {
+    /// <param name="only">When set, only these paths are built, as when a mod pack loses some files to a pack above it.</param>
     public static BuildResult Build(ModProject project, VirtualFileSystem vfs, string outputFolder,
-        IProgress<(string Stage, int Done, int Total)>? progress = null, CancellationToken cancel = default)
+        IProgress<(string Stage, int Done, int Total)>? progress = null, CancellationToken cancel = default, IReadOnlySet<string>? only = null)
     {
-        if (project.ChangeCount == 0)
+        if (project.ChangeCount == 0 || (only != null && !project.Changes.Any(c => only.Contains(c.Path))))
             throw new BuildFailedException("The project has no changes to build.");
 
         var clock = System.Diagnostics.Stopwatch.StartNew();
@@ -28,7 +29,7 @@ public static class OverlayBuilder
         var inxp = new List<ProjectChange>();
         var game = new List<ProjectChange>();
 
-        foreach (var change in project.Changes.OrderBy(c => c.Path, StringComparer.Ordinal))
+        foreach (var change in project.Changes.Where(c => only == null || only.Contains(c.Path)).OrderBy(c => c.Path, StringComparer.Ordinal))
         {
             var original = vfs.Find(change.Path);
             switch (original?.Family)
@@ -60,9 +61,13 @@ public static class OverlayBuilder
         foreach (var (family, changes) in new[] { ("inxp", inxp), ("game", game) })
         {
             var databases = changes.Where(c => IsDatabase(c.Path)).ToList();
-            var rest = changes.Where(c => !IsDatabase(c.Path)).ToList();
+            // A colour cube in the same archive as the XML that applies it froze the boot (seen in game), so cubes go apart.
+            var cubes = changes.Where(c => IsCube(c.Path)).ToList();
+            var rest = changes.Where(c => !IsDatabase(c.Path) && !IsCube(c.Path)).ToList();
             if (rest.Count > 0)
                 results.Add(WriteArchive(project, vfs, rest, Path.Combine(outputFolder, $"patch_{family}_99_{project.Slug}.big"), progress, cancel));
+            if (cubes.Count > 0)
+                results.Add(WriteArchive(project, vfs, cubes, Path.Combine(outputFolder, $"patch_{family}_99_{project.Slug}_cube.big"), progress, cancel));
             for (var i = 0; i < databases.Count; i++)
             {
                 var name = rest.Count == 0 && i == 0 ? $"patch_{family}_99_{project.Slug}.big" : $"patch_{family}_99_{project.Slug}_db{i + 1}.big";
@@ -111,6 +116,8 @@ public static class OverlayBuilder
     }
 
     private static bool IsDatabase(string path) => path.EndsWith(".db", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsCube(string path) => path.EndsWith(".cube", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The bytes as stored: wrapped only if the original was, since readers differ per path.</summary>
     private static byte[] Stored(ModProject project, VirtualFileSystem vfs, ProjectChange change)

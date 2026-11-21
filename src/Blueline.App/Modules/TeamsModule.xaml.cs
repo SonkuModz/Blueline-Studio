@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -108,6 +108,7 @@ public partial class TeamsModule : UserControl, IEditorModule
     private readonly UniformStudio _studio;
     private readonly TeamDetailsPanel _detailsPanel;
     private readonly FullIcePanel _fullIcePanel;
+    private readonly UniformSlotsPanel _slotsPanel;
     private readonly TruColorPanel _truColorPanel;
 
     public TeamsModule(AppServices services)
@@ -135,6 +136,9 @@ public partial class TeamsModule : UserControl, IEditorModule
         _fullIcePanel = new FullIcePanel(services);
         _fullIcePanel.CloseRequested += () => ShowFullIce(false);
         FullIceHost.Content = _fullIcePanel;
+        _slotsPanel = new UniformSlotsPanel(services);
+        _slotsPanel.CloseRequested += () => ShowSlots(false);
+        SlotsHost.Content = _slotsPanel;
         _truColorPanel = new TruColorPanel(services);
         _truColorPanel.CloseRequested += () => ShowTruColor(false);
         _truColorPanel.Saved += ReloadTeams;
@@ -157,7 +161,11 @@ public partial class TeamsModule : UserControl, IEditorModule
     public UniformStudio Studio => _studio;
     public TeamDetailsPanel DetailsPanel => _detailsPanel;
     public FullIcePanel FullIcePanel => _fullIcePanel;
+    public UniformSlotsPanel SlotsPanel => _slotsPanel;
     public TruColorPanel TruColorPanel => _truColorPanel;
+
+    /// <summary>Any choice in the More menu closes it.</summary>
+    private void OnMoreItem(object sender, RoutedEventArgs e) => MoreMenu.IsOpen = false;
 
     private void OnTruColor(object sender, RoutedEventArgs e) => ShowTruColor(TruColorButton.IsChecked == true);
 
@@ -187,6 +195,36 @@ public partial class TeamsModule : UserControl, IEditorModule
         TruColorHost.Visibility = Visibility.Collapsed;
     }
 
+    private void OnSlots(object sender, RoutedEventArgs e) => ShowSlots(SlotsButton.IsChecked == true);
+
+    /// <summary>Opens or closes the uniform slot editor in place of the art.</summary>
+    public void ShowSlots(bool on)
+    {
+        on &= _team != null;
+        if (on)
+        {
+            HideFullIce();
+            ShowDetails(false);
+            ShowUniform(false);
+            _slotsPanel.SetTeam(_team, _catalog);
+        }
+        SlotsButton.IsChecked = on;
+        SlotsHost.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        _slotsPanel.SetShowing(on);
+        if (!_studio.IsOpen && DetailsButton.IsChecked != true)
+            ArtPanel.Visibility = FilePanel.Visibility = on ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    /// <summary>Closes the slot editor when another editor takes the space.</summary>
+    private void HideSlots()
+    {
+        if (SlotsButton.IsChecked != true)
+            return;
+        SlotsButton.IsChecked = false;
+        SlotsHost.Visibility = Visibility.Collapsed;
+        _slotsPanel.SetShowing(false);
+    }
+
     private void OnFullIce(object sender, RoutedEventArgs e) => ShowFullIce(FullIceButton.IsChecked == true);
 
     /// <summary>Opens or closes the full-ice rink maker in place of the art.</summary>
@@ -196,6 +234,7 @@ public partial class TeamsModule : UserControl, IEditorModule
         if (on)
         {
             HideTruColor();
+            HideSlots();
             ShowDetails(false);
             ShowUniform(false);
             _fullIcePanel.SetTeam(_team, _catalog?.Teams ?? []);
@@ -210,6 +249,7 @@ public partial class TeamsModule : UserControl, IEditorModule
     private void HideFullIce()
     {
         HideTruColor();
+        HideSlots();
         if (FullIceButton.IsChecked != true)
             return;
         FullIceButton.IsChecked = false;
@@ -457,6 +497,11 @@ public partial class TeamsModule : UserControl, IEditorModule
         if (_team == null && DetailsButton.IsChecked == true)
             ShowDetails(false);
         FullIceButton.IsEnabled = _team != null;
+        SlotsButton.IsEnabled = _team != null;
+        if (_team == null && SlotsButton.IsChecked == true)
+            ShowSlots(false);
+        else if (SlotsButton.IsChecked == true)
+            _slotsPanel.SetTeam(_team, _catalog);
         if (_team == null && FullIceButton.IsChecked == true)
             ShowFullIce(false);
         else if (FullIceButton.IsChecked == true)
@@ -484,7 +529,7 @@ public partial class TeamsModule : UserControl, IEditorModule
         {
             var chip = new ToggleButton
             {
-                Style = (Style)FindResource("Chip"),
+                Style = (Style)FindResource("Pill"),
                 Content = $"{TeamCatalog.CategoryNames[category]}  {count:N0}",
                 IsChecked = category == _category,
                 Margin = new Thickness(0, 0, 4, 4),

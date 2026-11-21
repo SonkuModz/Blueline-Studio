@@ -195,6 +195,32 @@ public sealed class CaptureTour(MainWindow window, bool pressPlay = false)
             });
             teams.ShowTruColor(false);
 
+            // Uniform slots: the Leafs' jersey menu, then a slot added on a free kit name into the throwaway project.
+            await Step("05y1-uniform-slots", async () =>
+            {
+                window.Navigate("Teams", null);
+                await WaitFor(() => !teams.IsLoading);
+                teams.SelectTeam("Toronto Maple Leafs");
+                await TeamsSettled(teams);
+                teams.ShowSlots(true);
+                await Idle();
+                Note($"Uniform slots: {teams.SlotsPanel.Slots.Count} slots, {teams.SlotsPanel.FreeKits.Count} free kit names");
+            });
+            await Step("05y2-uniform-slots-added", async () =>
+            {
+                var kit = teams.SlotsPanel.FreeKits.FirstOrDefault(k => k.Name == "adidas_pre_order_twelve");
+                var home = teams.SlotsPanel.Slots.FirstOrDefault();
+                if (kit != null && home != null)
+                {
+                    var before = services.Workspace.Project!.ChangeCount;
+                    await teams.SlotsPanel.AddSlot(kit, home, null, null, position: 3, name: "Tour Kit");
+                    await WaitForJobs();
+                    Note($"Add slot changed {services.Workspace.Project.ChangeCount - before} files; now {teams.SlotsPanel.Slots.Count} slots");
+                }
+                await Idle();
+            });
+            teams.ShowSlots(false);
+
             await Step("05e-teams-other-league", async () =>
             {
                 teams.SelectTeam("Adler Mannheim");
@@ -472,6 +498,38 @@ public sealed class CaptureTour(MainWindow window, bool pressPlay = false)
                 Note($"From Teams, Jersey Maps shows {maps.NameText.Text}, maps made: {maps.HasMaps}");
             });
 
+            var roster = Module<RosterModule>();
+            long RosterId(string name) => roster.Book?.Players().FirstOrDefault(p => p.Name == name)?.GameId ?? -1;
+            await Step("05z1-roster-player", async () =>
+            {
+                window.Navigate("Roster", null);
+                await WaitFor(() => roster.Book != null && !roster.IsLoading);
+                roster.ShowTeam(11);
+                await Idle();
+                roster.SelectPlayers([RosterId("Connor McDavid")]);
+                await Idle();
+            });
+            await Step("05z2-roster-edited", async () =>
+            {
+                roster.EditField(RosterId("Connor McDavid"), "skater.c_speed", 70L);
+                roster.EditField(RosterId("Connor McDavid"), "bio.firstname", "Connie");
+                await Idle();
+            });
+            await Step("05z3-roster-lines", async () =>
+            {
+                roster.OpenLines();
+                await Idle();
+            });
+            await Step("05z4-roster-bulk", async () =>
+            {
+                roster.SelectPlayers(roster.Book!.PlayersOn(11).Take(5));
+                await Idle();
+            });
+            await Step("05z5-roster-saved", async () =>
+            {
+                roster.SaveEdits();
+                await Idle();
+            });
             var models = Module<ModelsModule>();
             await Step("06-models", async () =>
             {
@@ -1218,6 +1276,54 @@ public sealed class CaptureTour(MainWindow window, bool pressPlay = false)
                 await WaitForJobs();
                 await Idle();
             });
+
+            // Mod packs: the Export page (read-only plan, nothing exported) and the Mods page with a pack opened (a check only).
+            await Step("10m-export-pack", async () =>
+            {
+                var project = services.Workspace.Project!;
+                if (!project.Changes.Any(c => c.Path.EndsWith(".gnf", StringComparison.Ordinal)))
+                {
+                    var art = services.Workspace.Vfs!.Files.Where(f => f.Path.StartsWith("nhl/ui/kettle_assets/bgs/", StringComparison.Ordinal) && f.Extension == ".gnf").Take(3).ToList();
+                    project.SetMany([.. art.Select(f => { var b = services.Workspace.Vfs.ReadContent(f); b[^1] ^= 1; return (f.Path, b, "Tour: menu art"); })], "Tour: menu art");
+                }
+                window.Navigate("Build", null);
+                await Idle();
+                build.OnExportPack(null, null);
+                await WaitForJobs();
+                if (build.Content is PackExportPage page)
+                {
+                    var cover = Path.Combine(services.Workspace.Vfs!.Install.Root, "sce_sys", "pic0.png");
+                    if (File.Exists(cover))
+                        page.TourArt(new Blueline.Core.Packs.PackPicture(PngFile.Write(Controls.ImageFiles.Load(cover))));
+                    await page.ShowProjectPictures();
+                    await WaitForJobs();
+                }
+                await Idle();
+            });
+            await Step("10m2-export-pack-light", async () =>
+            {
+                window.SwitchTheme(Blueline.Core.UiPalette.Light, animate: false, save: false);
+                await Idle();
+            });
+            window.SwitchTheme(Blueline.Core.UiPalette.Dark, animate: false, save: false);
+            if (build.Content is PackExportPage open)
+                open.Back();
+            if (Environment.GetEnvironmentVariable("BLUELINE_TOUR_PACK") is { Length: > 0 } tourPack && File.Exists(tourPack))
+            {
+                await Step("10n-mods-pack", async () =>
+                {
+                    window.Navigate("Mods", tourPack);
+                    await Idle();
+                    await WaitForJobs();
+                    await Idle();
+                });
+                await Step("10n2-mods-pack-light", async () =>
+                {
+                    window.SwitchTheme(Blueline.Core.UiPalette.Light, animate: false, save: false);
+                    await Idle();
+                });
+                window.SwitchTheme(Blueline.Core.UiPalette.Dark, animate: false, save: false);
+            }
 
             var other = Path.Combine(folder, "tour-project-other");
             await Step("10b-add-mod-review", async () =>

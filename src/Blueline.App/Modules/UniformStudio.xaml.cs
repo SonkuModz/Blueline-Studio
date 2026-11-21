@@ -345,7 +345,7 @@ public partial class UniformStudio : UserControl
         else
         {
             var grey = Enum.GetValues<GearPart>().Where(p => _loadedZones.GetValueOrDefault(p) == null).Select(p => p.ToString().ToLowerInvariant()).ToList();
-            notes.Add($"Gloves and helmet use the {_gearKit.Label} gear rows" + (GearColours.IsGuessedLink(kit) ? " (which alternate goes with which jersey is a guess from the sheet names)" : "")
+            notes.Add($"Gloves and helmet use the {_gearKit.Label} gear rows"
                       + (grey.Count > 0 ? $"; {string.Join(" and ", grey)} grey (no row)" : ""));
             if (_panel.Kit is { } editing && editing.Variant != _gearKit.Variant)
                 notes.Add($"The editor shows {editing.Label}, not this kit");
